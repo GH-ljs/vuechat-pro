@@ -25,7 +25,12 @@ localforage.config({
   storeName: 'chat_sessions'
 })
 
+//典型的 Pinia Store 实现，用于管理一个聊天应用的状态
 export const useBusinessStore = defineStore('business-store', {
+  // 选项式 API 定义 Store，包含 state、getters 和 actions
+  // 1. State（状态）
+  // 2. Getters（计算属性）
+  // 3. Actions（动作）
   state: (): BusinessState => ({
     systemModelName: defaultModelName,
     sessions: [],
@@ -63,6 +68,7 @@ export const useBusinessStore = defineStore('business-store', {
     },
 
     // 2. 持久化保存
+    // 将 sessions 和 activeSessionId 保存到 IndexedDB 中
     async saveHistory() {
       await localforage.setItem('sessions', JSON.parse(JSON.stringify(this.sessions)))
       await localforage.setItem('activeSessionId', this.activeSessionId)

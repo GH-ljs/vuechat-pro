@@ -1,5 +1,6 @@
 import { mockEventStreamText } from '@/data'
 import { sleep } from '@/utils/request'
+import { useConfigStore } from '@/store/config'
 
 /**
  * 转义处理响应值为 data: 的 json 字符串
@@ -203,7 +204,7 @@ export const defaultMockModelName = 'standard'
  * 项目默认使用模型，按需修改此字段即可
  */
 
-export const defaultModelName = 'deepseek-v3'
+export const defaultModelName = 'siliconflow'
 //export const defaultModelName = defaultMockModelName
 
 export const modelMappingList: TypesModelLLM[] = [
@@ -267,22 +268,20 @@ export const modelMappingList: TypesModelLLM[] = [
     },
     // Event Stream 调用大模型接口 DeepSeek 深度求索 (Fetch 调用)
     chatFetch(context) {
+      const configStore = useConfigStore()
+      // 用户自定义 Key 优先，否则兜底使用环境变量
+      const apiKey = configStore.apiKeys.deepseek || import.meta.env.VITE_DEEPSEEK_KEY
       const url = new URL(`${ location.origin }/deepseek/chat/completions`)
-      const params = {
-      }
-      Object.keys(params).forEach(key => {
-        url.searchParams.append(key, params[key])
-      })
-
       const req = new Request(url, {
         method: 'post',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ import.meta.env.VITE_DEEPSEEK_KEY }`
+          'Authorization': `Bearer ${ apiKey }`
         },
         body: JSON.stringify({
           // 普通模型 V3
           'model': 'deepseek-chat',
+          'temperature': configStore.temperature, // 接入动态温度
           stream: true,
           messages: context
         })
@@ -311,22 +310,19 @@ export const modelMappingList: TypesModelLLM[] = [
     },
     // Event Stream 调用大模型接口 DeepSeek 深度求索 (Fetch 调用)
     chatFetch(context) {
+      const configStore = useConfigStore()
+      const apiKey = configStore.apiKeys.deepseek || import.meta.env.VITE_DEEPSEEK_KEY
       const url = new URL(`${ location.origin }/deepseek/chat/completions`)
-      const params = {
-      }
-      Object.keys(params).forEach(key => {
-        url.searchParams.append(key, params[key])
-      })
-
       const req = new Request(url, {
         method: 'post',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ import.meta.env.VITE_DEEPSEEK_KEY }`
+          'Authorization': `Bearer ${ apiKey }`
         },
         body: JSON.stringify({
           // 推理模型
           'model': 'deepseek-reasoner',
+          'temperature': configStore.temperature,
           stream: true,
           messages: context
         })
@@ -351,12 +347,6 @@ export const modelMappingList: TypesModelLLM[] = [
     // Event Stream 调用大模型接口 Ollama3 (Fetch 调用)
     chatFetch(context) {
       const url = new URL(`http://localhost:11434/api/chat`)
-      const params = {
-      }
-      Object.keys(params).forEach(key => {
-        url.searchParams.append(key, params[key])
-      })
-
       const req = new Request(url, {
         mode: 'cors',
         method: 'post',
@@ -367,7 +357,13 @@ export const modelMappingList: TypesModelLLM[] = [
           // 'model': 'deepseek-r1', // 内置深度思考响应
           'model': 'llama3',
           stream: true,
-          messages: context
+          messages: [
+            {
+              role: 'system',
+              content: '你的名字叫做小O, 全程使用中文回答我的问题。'
+            },
+            ...context
+          ]
         })
       })
       return fetch(req)
@@ -389,23 +385,28 @@ export const modelMappingList: TypesModelLLM[] = [
     },
     // Event Stream 调用大模型接口 Spark 星火认知大模型 (Fetch 调用)
     chatFetch(context) {
+      const configStore = useConfigStore()
+      const apiKey = configStore.apiKeys.spark || import.meta.env.VITE_SPARK_KEY
+
       const url = new URL(`${ location.origin }/spark/v1/chat/completions`)
-      const params = {
-      }
-      Object.keys(params).forEach(key => {
-        url.searchParams.append(key, params[key])
-      })
 
       const req = new Request(url, {
         method: 'post',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ import.meta.env.VITE_SPARK_KEY }`
+          'Authorization': `Bearer ${ apiKey }`
         },
         body: JSON.stringify({
           'model': '4.0Ultra',
+          'temperature': configStore.temperature,
           stream: true,
-          messages: context
+          messages: [
+            {
+              role: 'system',
+              content: '你叫小明同学，喜欢探索新的知识。'
+            },
+            ...context
+          ]
         })
       })
       return fetch(req)
@@ -427,22 +428,19 @@ export const modelMappingList: TypesModelLLM[] = [
     },
     // Event Stream 调用大模型接口 SiliconFlow 硅基流动大模型 (Fetch 调用)
     chatFetch(context) {
+      const configStore = useConfigStore()
+      const apiKey = configStore.apiKeys.siliconflow || import.meta.env.VITE_SILICONFLOW_KEY
       const url = new URL(`${ location.origin }/siliconflow/v1/chat/completions`)
-      const params = {
-      }
-      Object.keys(params).forEach(key => {
-        url.searchParams.append(key, params[key])
-      })
-
       const req = new Request(url, {
         method: 'post',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ import.meta.env.VITE_SILICONFLOW_KEY }`
+          'Authorization': `Bearer ${ apiKey }`
         },
         body: JSON.stringify({
           // 集成了大部分模型，可以免费使用
           'model': 'THUDM/glm-4-9b-chat',
+          'temperature': configStore.temperature,
           stream: true,
           messages: context
         })
@@ -466,23 +464,26 @@ export const modelMappingList: TypesModelLLM[] = [
     },
     // Event Stream 调用大模型接口 Kimi Moonshot 月之暗面大模型 (Fetch 调用)
     chatFetch (context) {
+      const configStore = useConfigStore()
+      const apiKey = configStore.apiKeys.moonshot || import.meta.env.VITE_MOONSHOT_KEY
       const url = new URL(`${ location.origin }/moonshot/v1/chat/completions`)
-      const params = {
-      }
-      Object.keys(params).forEach(key => {
-        url.searchParams.append(key, params[key])
-      })
-
       const req = new Request(url, {
         method: 'post',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ import.meta.env.VITE_MOONSHOT_KEY }`
+          'Authorization': `Bearer ${ apiKey }`
         },
         body: JSON.stringify({
           'model': 'moonshot-v1-8k',
+          'temperature': configStore.temperature,
           stream: true,
-          messages: context
+          messages: [
+            {
+              role: 'system',
+              content: '你是 Kimi，由 Moonshot AI 提供的人工智能助手。'
+            },
+            ...context
+          ]
         })
       })
       return fetch(req)

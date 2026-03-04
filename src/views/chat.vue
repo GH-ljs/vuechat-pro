@@ -5,10 +5,15 @@ import { type InputInst } from 'naive-ui'
 import type { SelectBaseOption } from 'naive-ui/es/select/src/interface'
 import { isGithubDeployed } from '@/config'
 import { UAParser } from 'ua-parser-js'
+import { useConfigStore } from '@/store/config'
 
 const route = useRoute()
 const router = useRouter()
 const businessStore = useBusinessStore()
+const configStore = useConfigStore()
+
+// 设置弹窗状态
+const showSettings = ref(false)
 
 onMounted(() => {// 组件挂载时，加载历史记录
   if (businessStore.loadHistory) {
@@ -16,6 +21,7 @@ onMounted(() => {// 组件挂载时，加载历史记录
   }
 })
 
+// 将模型列表转换为 Select 组件的选项格式，并根据部署环境控制某些模型的可选状态
 const modelListSelections = computed(() => {
   return modelMappingList.map<SelectBaseOption>((modelItem) => {
     let disabled = false
@@ -59,19 +65,15 @@ const scrollToBottom = async () => {
     messageContainer.value.scrollTop = messageContainer.value.scrollHeight
   }
 }
-
+// 打字机失败的统一处理函数
 const onFailedReader = () => {
   outputTextReader.value = null
   stylizingLoading.value = false
   if (refReaderMarkdownPreview.value) {
     refReaderMarkdownPreview.value.initializeEnd()
   }
-  window.$ModalMessage.error('转换失败，请重试')
-  setTimeout(() => {
-    if (refInputTextString.value) {
-      refInputTextString.value.focus()
-    }
-  })
+  window.$ModalMessage.error('转换失败，可能 API Key 配置有误或服务限流。')
+  setTimeout(() => refInputTextString.value?.focus())
   triggerModelTermination()
 }
 
@@ -104,6 +106,7 @@ const onCompletedReader = async () => {
   scrollToBottom()
 }
 
+// 处理发送消息的逻辑
 const handleCreateStylized = async () => {
   // 若正在加载，则点击后恢复初始状态
   if (stylizingLoading.value) {
@@ -148,21 +151,21 @@ const handleCreateStylized = async () => {
   }
 }
 
-import { useDialog, useMessage } from 'naive-ui'
+// import { useDialog, useMessage } from 'naive-ui'
 
-const dialog = useDialog()
-const message = useMessage()
+// const dialog = useDialog()
+// const message = useMessage()
 
 // 删除单个会话
 const handleDeleteSession = (id: string) => {
-  dialog.warning({
+  window.$ModalDialog.warning({
     title: '删除对话',
     content: '确定要删除这条对话记录吗？',
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: () => {
       businessStore.deleteSession(id)
-      message.success('对话已删除')
+      window.$ModalMessage.success('对话已删除')
     }
   })
 }
@@ -201,6 +204,7 @@ const placeholder = computed(() => {
   return `输入任意问题, 按 ${ isMacos.value ? 'Command' : 'Ctrl' } + Enter 键快捷开始...`
 })
 
+// 监听快捷键：Meta/Ctrl + Enter 触发发送
 watch(
   () => enterCommand.value,
   () => {
@@ -217,6 +221,7 @@ watch(
   }
 )
 
+// 监听 Ctrl+Enter 快捷键（Windows/Linux）
 watch(
   () => enterCtrl.value,
   () => {
@@ -233,6 +238,7 @@ watch(
   }
 )
 
+// 初始化状态：清空输入框，重置加载状态，重置预览组件
 const handleResetState = () => {
   inputTextString.value = ''
 
@@ -245,6 +251,7 @@ const handleResetState = () => {
 }
 handleResetState()
 
+// 定义一个可复用的 PromptTag 组件，用于展示预设提示语并支持点击快速填充输入框
 const PromptTag = defineComponent({
   props: {
     text: {
@@ -300,13 +307,10 @@ const promptTextList = ref([
 ])
 </script>
 
-
 <template>
-  <!-- 最外层使用 Flex 布局分离侧边栏和主界面 -->
   <div class="w-full h-100vh flex bg-[#f4f6f8]">
-    <!-- 左侧会话列表侧边栏 (小屏幕自动隐藏) -->
-    <div class="w-260px bg-[#fafbfc] border-r border-[#e5e5e5] flex-col hidden sm:flex">
-      <!-- 新建对话按钮 -->
+    <!-- 左侧会话列表侧边栏 -->
+    <div class="w-260px bg-[#fafbfc] border-r border-[#e5e5e5] flex flex-col hidden sm:flex">
       <div class="p-16 border-b border-[#e5e5e5]">
         <n-button
           dashed
@@ -337,13 +341,23 @@ const promptTextList = ref([
           <div class="truncate text-14 flex-1 mr-4">
             {{ session.title }}
           </div>
-          <!-- 删除图标 (Hover时显示) -->
           <div
             class="opacity-0 group-hover:opacity-100 transition-opacity p-4 rounded-4 hover:bg-white"
             @click.stop="handleDeleteSession(session.id)"
           >
             <div class="i-ic:round-delete text-18 text-red-500 hover:text-red-700"></div>
           </div>
+        </div>
+      </div>
+
+      <!-- 侧边栏底部添加设置按钮 -->
+      <div class="p-12 border-t border-[#e5e5e5]">
+        <div
+          class="px-12 py-12 rounded-8 cursor-pointer transition-colors hover:bg-[#f0f2f5] text-[#333] flex items-center"
+          @click="showSettings = true"
+        >
+          <div class="i-hugeicons:settings-01 text-18 mr-8"></div>
+          <div class="text-14 font-medium">全局设置</div>
         </div>
       </div>
     </div>
@@ -358,7 +372,6 @@ const promptTextList = ref([
           flex="~ col"
           h-full
         >
-          <!-- 顶部导航栏 -->
           <div
             flex="~ justify-between items-center"
             class="border-b border-[#eee] py-8"
@@ -384,7 +397,6 @@ const promptTextList = ref([
             </NavigationNavBar>
           </div>
 
-          <!-- 聊天消息列表区域 -->
           <div
             ref="messageContainer"
             flex="1 ~ col"
@@ -393,14 +405,12 @@ const promptTextList = ref([
             class="overflow-y-auto px-16 pt-20 sm:px-40"
           >
             <template v-if="businessStore.messageList?.length > 0 || stylizingLoading">
-              <!-- 历史消息渲染 -->
               <div
                 v-for="(msg, index) in businessStore.messageList"
                 :key="index"
                 class="mb-24 flex"
                 :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
               >
-                <!-- AI 头像 -->
                 <div
                   v-if="msg.role !== 'user'"
                   class="w-36 h-36 rounded-full bg-primary flex items-center justify-center mr-12 shrink-0 mt-4"
@@ -422,7 +432,6 @@ const promptTextList = ref([
                   </template>
                 </div>
 
-                <!-- User 头像 -->
                 <div
                   v-if="msg.role === 'user'"
                   class="w-36 h-36 rounded-full bg-gray-300 flex items-center justify-center ml-12 shrink-0 mt-4"
@@ -431,7 +440,6 @@ const promptTextList = ref([
                 </div>
               </div>
 
-              <!-- 正在输出的流式打字机占位 -->
               <div
                 v-show="stylizingLoading"
                 class="flex justify-start mb-24"
@@ -468,7 +476,6 @@ const promptTextList = ref([
             </template>
           </div>
 
-          <!-- 底部输入区域 -->
           <div
             flex="~ col items-center"
             class="px-16 pb-20 pt-10 sm:px-40 bg-white/80 backdrop-blur-md border-t border-[#f0f0f0]"
@@ -535,6 +542,106 @@ const promptTextList = ref([
         </div>
       </LayoutCenterPanel>
     </div>
+
+    <!-- 新增设置弹窗 (Settings Modal) -->
+    <n-modal
+      v-model:show="showSettings"
+      preset="card"
+      title="全局设置"
+      class="w-500px max-w-90vw"
+      :bordered="false"
+      size="huge"
+    >
+      <n-tabs
+        type="line"
+        animated
+      >
+        <!-- API 配置面板 -->
+        <n-tab-pane
+          name="api"
+          tab="模型接口配置"
+        >
+          <n-alert
+            title="数据隐私安全"
+            type="info"
+            class="mb-20"
+          >
+            您的 API Key 仅保存在浏览器本地（LocalStorage），不会上传至任何第三方服务器。留空则默认使用系统配置。
+          </n-alert>
+          <n-form
+            label-placement="left"
+            label-width="auto"
+            require-mark-placement="right-hanging"
+          >
+            <n-form-item label="DeepSeek">
+              <n-input
+                v-model:value="configStore.apiKeys.deepseek"
+                placeholder="sk-..."
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item>
+            <n-form-item label="SiliconFlow">
+              <n-input
+                v-model:value="configStore.apiKeys.siliconflow"
+                placeholder="sk-..."
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item>
+            <n-form-item label="Moonshot">
+              <n-input
+                v-model:value="configStore.apiKeys.moonshot"
+                placeholder="sk-..."
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item>
+            <n-form-item label="Spark 星火">
+              <n-input
+                v-model:value="configStore.apiKeys.spark"
+                placeholder="key:secret 格式"
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item>
+          </n-form>
+        </n-tab-pane>
+
+        <!-- 通用参数面板 -->
+        <n-tab-pane
+          name="general"
+          tab="通用参数"
+        >
+          <n-form>
+            <n-form-item label="发散度 (Temperature)">
+              <div class="flex-1 w-full flex items-center gap-4">
+                <n-slider
+                  v-model:value="configStore.temperature"
+                  :step="0.1"
+                  :min="0"
+                  :max="2"
+                />
+                <span class="w-40px text-right font-mono">{{ configStore.temperature }}</span>
+              </div>
+            </n-form-item>
+            <div class="text-12 text-gray-400 mt-[-10px] mb-20">
+              值越大，AI 回复的随机性和创造性越高；值越小，回复越严谨确切。推荐：写代码 0.1，写文章 0.7+
+            </div>
+          </n-form>
+        </n-tab-pane>
+      </n-tabs>
+      <template #footer>
+        <div class="flex justify-end mt-10">
+          <n-button
+            type="primary"
+            @click="showSettings = false"
+          >
+            完成
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
