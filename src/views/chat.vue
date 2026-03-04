@@ -4,15 +4,13 @@ import { renderMarkdownText } from '@/components/MarkdownPreview/plugins/markdow
 import { type InputInst } from 'naive-ui'
 import type { SelectBaseOption } from 'naive-ui/es/select/src/interface'
 import { isGithubDeployed } from '@/config'
-
 import { UAParser } from 'ua-parser-js'
 
-//const route = useRoute()
-//const router = useRouter()
+const route = useRoute()
+const router = useRouter()
 const businessStore = useBusinessStore()
 
-onMounted(() => {
-  // 组件挂载时，加载历史记录
+onMounted(() => {// 组件挂载时，加载历史记录
   if (businessStore.loadHistory) {
     businessStore.loadHistory()
   }
@@ -24,7 +22,6 @@ const modelListSelections = computed(() => {
     if (isGithubDeployed && modelItem.modelName !== defaultMockModelName) {
       disabled = true
     }
-
     return {
       label: modelItem.label,
       value: modelItem.modelName,
@@ -156,20 +153,28 @@ import { useDialog, useMessage } from 'naive-ui'
 const dialog = useDialog()
 const message = useMessage()
 
-const handleClearHistory = async () => {
+// 删除单个会话
+const handleDeleteSession = (id: string) => {
   dialog.warning({
-    title: '确认清空',
-    content: '确定要清空当前的对话记录吗？清空后无法恢复。',
-    positiveText: '确认',
+    title: '删除对话',
+    content: '确定要删除这条对话记录吗？',
+    positiveText: '删除',
     negativeText: '取消',
-    onPositiveClick: async () => {
-      if (businessStore.clearHistory) {
-        await businessStore.clearHistory()
-      }
-      message.success('已清空对话记录')
+    onPositiveClick: () => {
+      businessStore.deleteSession(id)
+      message.success('对话已删除')
     }
   })
 }
+
+// 监听会话切换：如果正在输出时切换了会话，强制中断打字机
+watch(() => businessStore.activeSessionId, () => {
+  if (stylizingLoading.value) {
+    refReaderMarkdownPreview.value?.abortReader()
+    stylizingLoading.value = false
+  }
+  setTimeout(scrollToBottom, 100)
+})
 
 const keys = useMagicKeys()
 const enterCommand = keys['Meta+Enter']
@@ -290,206 +295,263 @@ const PromptTag = defineComponent({
 })
 
 const promptTextList = ref([
-  '打个招呼吧，并告诉我你的名字',
-  '使用中文，回答以下两个问题，分段表示\n1、你是什么模型？\n2、请分别使用 Vue3 和 React 编写一个 Button 组件，要求在 Vue3 中使用 Setup Composition API 语法糖，在 React 中使用 TSX 语法'
+  '写一段自我介绍',
+  '请用 Vue3 写一个倒计时组件'
 ])
 </script>
 
+
 <template>
-  <LayoutCenterPanel
-    :loading="loading"
-  >
-    <!-- 内容区域 -->
-    <div
-      flex="~ col"
-      h-full
-    >
-      <div
-        flex="~ justify-between items-center"
-      >
-        <NavigationNavBar>
-          <template #right>
-            <div
-              flex="~ justify-center items-center wrap"
-              class="text-16 line-height-16"
-            >
-              <n-button
-                v-if="businessStore.messageList?.length > 0"
-                text
-                type="error"
-                class="mr-20 font-bold"
-                @click="handleClearHistory"
-              >
-                清空对话
-              </n-button>
-              <span class="lt-xs:hidden">当前模型：</span>
-              <div
-                flex="~ justify-center items-center"
-              >
-                <n-select
-                  v-model:value="businessStore.systemModelName"
-                  class="w-280 lt-xs:w-260 pr-10 font-italic font-bold"
-                  placeholder="请选择模型"
-                  :disabled="stylizingLoading"
-                  :options="modelListSelections"
-                />
-                <CustomTooltip
-                  :disabled="false"
-                >
-                  <div>注意：</div>
-                  <div>
-                    演示环境仅支持 “模拟数据模型”
-                  </div>
-                  <div>
-                    如需测试其他模型请克隆<a
-                      href="https://github.com/pdsuwwz/chatgpt-vue3-light-mvp"
-                      target="_blank"
-                      class="px-2 underline c-warning font-bold"
-                    >本仓库</a>到本地运行
-                  </div>
-                  <template #trigger>
-                    <span
-                      class="cursor-help font-bold c-primary text-17 i-ic:sharp-help"
-                      ml-10
-                      mr-24
-                    ></span>
-                  </template>
-                </CustomTooltip>
-              </div>
-            </div>
+  <!-- 最外层使用 Flex 布局分离侧边栏和主界面 -->
+  <div class="w-full h-100vh flex bg-[#f4f6f8]">
+    <!-- 左侧会话列表侧边栏 (小屏幕自动隐藏) -->
+    <div class="w-260px bg-[#fafbfc] border-r border-[#e5e5e5] flex-col hidden sm:flex">
+      <!-- 新建对话按钮 -->
+      <div class="p-16 border-b border-[#e5e5e5]">
+        <n-button
+          dashed
+          block
+          type="primary"
+          size="large"
+          @click="businessStore.addSession()"
+        >
+          <template #icon>
+            <div class="i-ic:round-add text-20"></div>
           </template>
-        </NavigationNavBar>
+          新建对话
+        </n-button>
       </div>
 
-      <!-- 聊天消息列表区域 -->
-      <div
-        ref="messageContainer"
-        flex="1 ~ col"
-        min-h-0
-        pb-20
-        class="overflow-y-auto px-24px pt-20px"
-      >
-        <template v-if="businessStore.messageList?.length > 0 || stylizingLoading">
-          <!-- 历史消息渲染 -->
-          <div
-            v-for="(msg, index) in businessStore.messageList"
-            :key="index"
-            class="mb-24 flex"
-            :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
-          >
-            <div
-              class="max-w-85% rounded-12 p-16"
-              :class="msg.role === 'user' ? 'bg-[#e5e5e5] text-[#333]' : 'bg-[#f4f6f8] text-[#333] markdown-wrapper'"
-            >
-              <template v-if="msg.role === 'user'">
-                <div class="whitespace-pre-wrap">{{ msg.content }}</div>
-              </template>
-              <template v-else>
-                <div v-html="renderMarkdownText(msg.content)"></div>
-              </template>
-            </div>
-          </div>
-
-          <!-- 正在输出的流式打字机占位 -->
-          <div
-            v-show="stylizingLoading"
-            class="flex justify-start mb-24"
-          >
-            <div class="max-w-85% rounded-12 bg-[#f4f6f8] p-16">
-              <MarkdownPreview
-                ref="refReaderMarkdownPreview"
-                v-model:reader="outputTextReader"
-                :model="businessStore.currentModelItem?.modelName"
-                :transform-stream-fn="businessStore.currentModelItem?.transformStreamValue"
-                @failed="onFailedReader"
-                @completed="onCompletedReader"
-              />
-            </div>
-          </div>
-        </template>
-
-        <template v-else>
-          <n-empty
-            size="large"
-            class="font-bold h-full flex items-center justify-center"
-            description="VueChat Pro：开始你的对话吧"
-          >
-            <template #icon>
-              <n-icon>
-                <div class="i-hugeicons:ai-chat-02"></div>
-              </n-icon>
-            </template>
-          </n-empty>
-        </template>
-      </div>
-
-      <div
-        flex="~ col items-center"
-        flex-basis="10%"
-        p="14px"
-        py="0"
-      >
+      <!-- 会话列表滚动区 -->
+      <div class="flex-1 overflow-y-auto p-12">
         <div
-          w-full
-          flex="~ justify-start"
-          class="px-1em pb-10"
+          v-for="session in businessStore.sessions"
+          :key="session.id"
+          class="px-12 py-14 mb-8 rounded-8 cursor-pointer transition-colors flex items-center justify-between group border border-transparent"
+          :class="businessStore.activeSessionId === session.id
+            ? 'bg-[#e6f1fc] border-[#bae0ff] text-[#18a058] font-bold'
+            : 'hover:bg-[#f0f2f5] text-[#333]'"
+          @click="businessStore.switchSession(session.id)"
         >
-          <n-space>
-            <PromptTag
-              v-for="(textItem, idx) in promptTextList"
-              :key="idx"
-              :text="textItem"
-            />
-          </n-space>
-        </div>
-        <div
-          relative
-          flex="1"
-          w-full
-          px-1em
-        >
-          <n-input
-            ref="refInputTextString"
-            v-model:value="inputTextString"
-            type="textarea"
-            autofocus
-            h-full
-            class="textarea-resize-none text-15"
-            :style="{
-              '--n-border-radius': '20px',
-              '--n-padding-left': '20px',
-              '--n-padding-right': '20px',
-              '--n-padding-vertical': '10px',
-            }"
-            :placeholder="placeholder"
-          />
-          <n-float-button
-            position="absolute"
-            :right="40"
-            bottom="50%"
-            :type="stylizingLoading ? 'primary' : 'default'"
-            color
-            :class="[
-              stylizingLoading && 'opacity-90',
-              'translate-y-50%'
-            ]"
-            @click.stop="handleCreateStylized()"
+          <div class="i-hugeicons:chat-01 text-16 mr-8 opacity-70"></div>
+          <div class="truncate text-14 flex-1 mr-4">
+            {{ session.title }}
+          </div>
+          <!-- 删除图标 (Hover时显示) -->
+          <div
+            class="opacity-0 group-hover:opacity-100 transition-opacity p-4 rounded-4 hover:bg-white"
+            @click.stop="handleDeleteSession(session.id)"
           >
-            <div
-              v-if="stylizingLoading"
-              class="i-svg-spinners:pulse-2 c-#fff"
-            ></div>
-            <div
-              v-else
-              class="transform-rotate-z--90 text-22 c-#303133/70 i-hugeicons:start-up-02"
-            ></div>
-          </n-float-button>
+            <div class="i-ic:round-delete text-18 text-red-500 hover:text-red-700"></div>
+          </div>
         </div>
       </div>
     </div>
-  </LayoutCenterPanel>
+
+    <!-- 右侧聊天主区域 -->
+    <div class="flex-1 h-full min-w-0 relative">
+      <LayoutCenterPanel
+        :loading="loading"
+        class="h-full !rounded-none"
+      >
+        <div
+          flex="~ col"
+          h-full
+        >
+          <!-- 顶部导航栏 -->
+          <div
+            flex="~ justify-between items-center"
+            class="border-b border-[#eee] py-8"
+          >
+            <NavigationNavBar>
+              <template #right>
+                <div
+                  flex="~ justify-center items-center wrap"
+                  class="text-16 line-height-16 pr-10"
+                >
+                  <span class="lt-xs:hidden text-14 c-gray-500 mr-10">模型驱动：</span>
+                  <div flex="~ justify-center items-center">
+                    <n-select
+                      v-model:value="businessStore.systemModelName"
+                      class="w-180 lt-xs:w-160 font-bold"
+                      placeholder="请选择模型"
+                      :disabled="stylizingLoading"
+                      :options="modelListSelections"
+                    />
+                  </div>
+                </div>
+              </template>
+            </NavigationNavBar>
+          </div>
+
+          <!-- 聊天消息列表区域 -->
+          <div
+            ref="messageContainer"
+            flex="1 ~ col"
+            min-h-0
+            pb-20
+            class="overflow-y-auto px-16 pt-20 sm:px-40"
+          >
+            <template v-if="businessStore.messageList?.length > 0 || stylizingLoading">
+              <!-- 历史消息渲染 -->
+              <div
+                v-for="(msg, index) in businessStore.messageList"
+                :key="index"
+                class="mb-24 flex"
+                :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
+              >
+                <!-- AI 头像 -->
+                <div
+                  v-if="msg.role !== 'user'"
+                  class="w-36 h-36 rounded-full bg-primary flex items-center justify-center mr-12 shrink-0 mt-4"
+                >
+                  <div class="i-hugeicons:ai-chat-02 text-white text-20"></div>
+                </div>
+
+                <div
+                  class="max-w-[85%] rounded-12 p-16 shadow-sm"
+                  :class="msg.role === 'user'
+                    ? 'bg-[#e5e5e5] text-[#333] rounded-tr-4'
+                    : 'bg-[#fff] border border-[#eee] text-[#333] markdown-wrapper rounded-tl-4'"
+                >
+                  <template v-if="msg.role === 'user'">
+                    <div class="whitespace-pre-wrap">{{ msg.content }}</div>
+                  </template>
+                  <template v-else>
+                    <div v-html="renderMarkdownText(msg.content)"></div>
+                  </template>
+                </div>
+
+                <!-- User 头像 -->
+                <div
+                  v-if="msg.role === 'user'"
+                  class="w-36 h-36 rounded-full bg-gray-300 flex items-center justify-center ml-12 shrink-0 mt-4"
+                >
+                  <div class="i-hugeicons:user text-white text-20"></div>
+                </div>
+              </div>
+
+              <!-- 正在输出的流式打字机占位 -->
+              <div
+                v-show="stylizingLoading"
+                class="flex justify-start mb-24"
+              >
+                <div class="w-36 h-36 rounded-full bg-primary flex items-center justify-center mr-12 shrink-0 mt-4">
+                  <div class="i-hugeicons:ai-chat-02 text-white text-20"></div>
+                </div>
+                <div class="max-w-[85%] rounded-12 rounded-tl-4 border border-[#eee] bg-[#fff] p-16 shadow-sm min-w-100">
+                  <MarkdownPreview
+                    ref="refReaderMarkdownPreview"
+                    v-model:reader="outputTextReader"
+                    :model="businessStore.currentModelItem?.modelName"
+                    :transform-stream-fn="businessStore.currentModelItem?.transformStreamValue"
+                    @failed="onFailedReader"
+                    @completed="onCompletedReader"
+                  />
+                </div>
+              </div>
+            </template>
+
+            <template v-else>
+              <n-empty
+                size="large"
+                class="font-bold h-full flex items-center justify-center mt-[-10%]"
+                description="VueChat Pro"
+              >
+                <template #icon>
+                  <n-icon class="text-primary opacity-60 text-60">
+                    <div class="i-hugeicons:ai-chat-02"></div>
+                  </n-icon>
+                </template>
+                <div class="text-14 font-normal text-gray-400 mt-10">随时开始一段新的对话</div>
+              </n-empty>
+            </template>
+          </div>
+
+          <!-- 底部输入区域 -->
+          <div
+            flex="~ col items-center"
+            class="px-16 pb-20 pt-10 sm:px-40 bg-white/80 backdrop-blur-md border-t border-[#f0f0f0]"
+          >
+            <div
+              w-full
+              flex="~ justify-start"
+              class="pb-10"
+            >
+              <n-space>
+                <PromptTag
+                  v-for="(textItem, idx) in promptTextList"
+                  :key="idx"
+                  :text="textItem"
+                />
+              </n-space>
+            </div>
+            <div
+              relative
+              flex="1"
+              w-full
+            >
+              <n-input
+                ref="refInputTextString"
+                v-model:value="inputTextString"
+                type="textarea"
+                autofocus
+                h-full
+                class="textarea-resize-none text-15 shadow-sm"
+                :style="{
+                  '--n-border-radius': '16px',
+                  '--n-padding-left': '20px',
+                  '--n-padding-right': '60px',
+                  '--n-padding-vertical': '14px',
+                  '--n-border': '1px solid #e0e0e0',
+                  '--n-border-focus': '1px solid #18a058',
+                  '--n-box-shadow-focus': '0 0 0 2px rgba(24, 160, 88, 0.2)'
+                }"
+                :placeholder="placeholder"
+              />
+              <n-float-button
+                position="absolute"
+                :right="12"
+                bottom="12"
+                :width="40"
+                :height="40"
+                :type="stylizingLoading ? 'primary' : (inputTextString.trim() ? 'primary' : 'default')"
+                color
+                :class="[stylizingLoading && 'opacity-90']"
+                @click.stop="handleCreateStylized()"
+              >
+                <div
+                  v-if="stylizingLoading"
+                  class="i-svg-spinners:pulse-2 c-#fff text-20"
+                ></div>
+                <div
+                  v-else
+                  class="text-20"
+                  :class="inputTextString.trim() ? 'c-#fff i-hugeicons:sent' : 'c-#999 i-hugeicons:start-up-02'"
+                ></div>
+              </n-float-button>
+            </div>
+          </div>
+        </div>
+      </LayoutCenterPanel>
+    </div>
+  </div>
 </template>
 
 <style lang="scss" scoped>
+/* 自定义滚动条美化 */
 
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgb(0 0 0 / 15%);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 </style>

@@ -322,7 +322,7 @@ declare global {
   export type { RouteRecordRaw, RouteLocationRaw } from 'vue-router'
   import('vue-router')
   // @ts-ignore
-  export type { BusinessState } from './src/store/business/index'
+  export type { ChatSession, BusinessState } from './src/store/business/index'
   import('./src/store/business/index')
 }
 
