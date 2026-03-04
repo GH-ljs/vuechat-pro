@@ -294,7 +294,8 @@ defineExpose({
   abortReader,
   resetStatus,
   initializeStart,
-  initializeEnd
+  initializeEnd,
+  displayText // <--- 新增这行！不然上层组件获取不到完整输出结果
 })
 
 const showLoading = computed(() => {

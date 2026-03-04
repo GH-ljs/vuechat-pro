@@ -34,5 +34,6 @@
     "toml",
     "gql",
     "graphql"
-  ]
+  ],
+  "python-envs.defaultEnvManager": "ms-python.python:system"
 }
