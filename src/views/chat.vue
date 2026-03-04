@@ -1,5 +1,5 @@
 <script lang="tsx" setup>
-import { defaultMockModelName, modelMappingList, triggerModelTermination } from '@/components/MarkdownPreview/models'
+import { modelMappingList, triggerModelTermination } from '@/components/MarkdownPreview/models'
 import { renderMarkdownText } from '@/components/MarkdownPreview/plugins/markdown'
 import { type InputInst } from 'naive-ui'
 import type { SelectBaseOption } from 'naive-ui/es/select/src/interface'
@@ -24,14 +24,10 @@ onMounted(() => {// 组件挂载时，加载历史记录
 // 将模型列表转换为 Select 组件的选项格式，并根据部署环境控制某些模型的可选状态
 const modelListSelections = computed(() => {
   return modelMappingList.map<SelectBaseOption>((modelItem) => {
-    let disabled = false
-    if (isGithubDeployed && modelItem.modelName !== defaultMockModelName) {
-      disabled = true
-    }
     return {
       label: modelItem.label,
       value: modelItem.modelName,
-      disabled
+      disabled: false
     }
   })
 })

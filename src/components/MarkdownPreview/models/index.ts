@@ -209,45 +209,6 @@ export const defaultModelName = 'siliconflow'
 
 export const modelMappingList: TypesModelLLM[] = [
   {
-    label: '🧪 模拟数据模型',
-    modelName: 'standard',
-    transformStreamValue(readValue, textDecoder) {
-      let content = ''
-      if (readValue instanceof Uint8Array) {
-        content = textDecoder.decode(readValue, {
-          stream: true
-        })
-      } else {
-        content = readValue
-      }
-      return {
-        content
-      }
-    },
-    // Mock Event Stream 用于模拟读取大模型接口 Mock 数据
-    async chatFetch(context): Promise<Response> {
-      // 模拟 res.body 的数据
-      // 将 mockData 转换为 ReadableStream
-
-      const mockReadableStream = new ReadableStream({
-        start(controller) {
-          // 将每一行数据作为单独的 chunk
-          mockEventStreamText.split('\n').forEach(line => {
-            controller.enqueue(new TextEncoder().encode(`${ line }\n`))
-          })
-          controller.close()
-        }
-      })
-      await sleep(500)
-
-      return new Promise((resolve) => {
-        resolve({
-          body: mockReadableStream
-        } as Response)
-      })
-    }
-  },
-  {
     label: '🐋 DeepSeek-V3',
     modelName: 'deepseek-v3',
     transformStreamValue(readValue) {

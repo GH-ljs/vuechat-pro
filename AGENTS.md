@@ -2,7 +2,7 @@
 
 [Context]
 
-- Project: chatgpt-vue3-light-mvp
+- Project: vuechat-pro
 - Stack: Vue 3, Vite 6/7, TypeScript, Pinia, Naive UI, UnoCSS
 - Package manager: pnpm (see `packageManager` in `package.json`)
 - Entry: `src/main.ts`, root HTML `index.html`

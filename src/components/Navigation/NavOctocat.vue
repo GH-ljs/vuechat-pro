@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 
-const link = ref('https://github.com/pdsuwwz/chatgpt-vue3-light-mvp')
+const link = ref('https://github.com/GH-ljs/vuechat-pro')
 
 </script>
 

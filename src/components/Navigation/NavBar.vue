@@ -15,7 +15,7 @@ withDefaults(
 
 
 const handleToRepo = () => {
-  const link = ref('https://github.com/pdsuwwz/chatgpt-vue3-light-mvp')
+  const link = ref('https://github.com/GH-ljs/vuechat-pro')
   window.open(link.value, '_blank')
 }
 
