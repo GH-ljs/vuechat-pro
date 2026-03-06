@@ -11,6 +11,7 @@ export type ContentPart =
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
   content: string | ContentPart[] // 支持多模态内容
+  attachContext?: string // 用于存放文档解析出来的前置上下文，界面不显示，只在底层拼接
 }
 
 // 统一的 API 请求配置结构
@@ -18,6 +19,28 @@ export interface FetchOptions {
   url: string
   headers: Record<string, string>
   body: any
+}
+
+// 【新增核心拦截器】在发送给大模型前，动态拼装系统提示词
+const buildPayloadMessages = (context: ChatMessage[]) => {
+  const payload: any[] = []
+
+  context.forEach(msg => {
+    // 如果这条消息带着文档上下文，插入一个 System 角色给大模型提供背景知识
+    if (msg.attachContext) {
+      payload.push({
+        role: 'system',
+        content: `【背景参考文档】\n${ msg.attachContext }\n\n请严格基于上述文档内容回答用户的下一个问题。`
+      })
+    }
+    // 推入用户原本的消息
+    payload.push({
+      role: msg.role,
+      content: msg.content
+    })
+  })
+
+  return payload
 }
 
 interface TypesModelLLM {
@@ -50,7 +73,7 @@ export const modelMappingList: TypesModelLLM[] = [
           model: 'deepseek-chat',
           temperature: configStore.temperature,
           stream: true,
-          messages: context
+          messages: buildPayloadMessages(context)
         })
       }
     },
@@ -76,7 +99,7 @@ export const modelMappingList: TypesModelLLM[] = [
         body: JSON.stringify({
           model: 'deepseek-reasoner',
           stream: true,
-          messages: context
+          messages: buildPayloadMessages(context)
         })
       }
     },
@@ -102,7 +125,7 @@ export const modelMappingList: TypesModelLLM[] = [
           model: 'THUDM/glm-4-9b-chat',
           temperature: configStore.temperature,
           stream: true,
-          messages: context
+          messages: buildPayloadMessages(context)
         })
       }
     },
@@ -127,13 +150,7 @@ export const modelMappingList: TypesModelLLM[] = [
           model: 'moonshot-v1-8k',
           temperature: configStore.temperature,
           stream: true,
-          messages: [
-            {
-              role: 'system',
-              content: '你是 Kimi，由 Moonshot AI 提供的人工智能助手。'
-            },
-            ...context
-          ]
+          messages: buildPayloadMessages(context)
         })
       }
     },
@@ -161,7 +178,7 @@ export const modelMappingList: TypesModelLLM[] = [
           model: 'Qwen/Qwen2-VL-72B-Instruct', // 强大的视觉模型
           temperature: configStore.temperature,
           stream: true,
-          messages: context
+          messages: buildPayloadMessages(context)
         })
       }
     },
