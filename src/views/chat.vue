@@ -1,10 +1,11 @@
 <script lang="tsx" setup>
-import { modelMappingList } from '@/components/MarkdownPreview/models'
+import { type ContentPart, modelMappingList } from '@/components/MarkdownPreview/models'
 import { renderMarkdownText } from '@/components/MarkdownPreview/plugins/markdown'
 import { type InputInst } from 'naive-ui'
 import type { SelectBaseOption } from 'naive-ui/es/select/src/interface'
 import { UAParser } from 'ua-parser-js'
 import { useConfigStore } from '@/store/config'
+import MarkdownPreview from '@/components/MarkdownPreview/index.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,13 +16,12 @@ const configStore = useConfigStore()
 const showSettings = ref(false)
 
 onMounted(() => {
-  // 组件挂载时，加载历史记录
   if (businessStore.loadHistory) {
     businessStore.loadHistory()
   }
 })
 
-// 将模型列表转换为 Select 组件的选项格式
+// 模型列表下拉框
 const modelListSelections = computed(() => {
   return modelMappingList.map<SelectBaseOption>((modelItem) => {
     return {
@@ -32,22 +32,119 @@ const modelListSelections = computed(() => {
   })
 })
 
-const loading = ref(true)
+// === 判断当前选中的模型是否支持识图 ===
+const isVisionModel = computed(() => {
+  const current = businessStore.currentModelItem
+  return current?.supportVision === true
+})
 
-setTimeout(() => {
-  loading.value = false
-}, 700)
+const loading = ref(true)
+setTimeout(() => { loading.value = false }, 700)
 
 const stylizingLoading = ref(false)
-
-/**
- * 输入字符串
- */
 const inputTextString = ref('')
 const refInputTextString = ref<InputInst | null>()
 
-// 滚动容器的 ref
+const aiReplyingText = ref('')
 const messageContainer = ref<HTMLElement>()
+
+// ================= 多模态：图片压缩与预览核心逻辑 =================
+const selectedImageBase64 = ref<string | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// 触发隐藏的文件选择器
+const triggerFileUpload = () => {
+  if (!isVisionModel.value) {
+    window.$ModalMessage.warning('当前选中的模型不支持识图，请先在右上角切换至支持识图的模型 (如 Qwen-VL)')
+    return
+  }
+  fileInputRef.value?.click()
+}
+
+/**
+ * 核心技术点：纯前端 Canvas 图片压缩算法
+ * 将用户的高清大图等比缩放并压缩质量，防止 Base64 字符串过长撑爆 Token 或导致请求 413 错误
+ */
+const compressImage = (file: File, maxWidth = 1200, quality = 0.7): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.readAsDataURL(file)
+    reader.onload = (event) => {
+      const img = new Image()
+      img.src = event.target?.result as string
+      img.onload = () => {
+        // 计算缩放比例
+        let width = img.width
+        let height = img.height
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width)
+          width = maxWidth
+        }
+
+        // 绘制到 Canvas 上
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('无法创建 Canvas 上下文'))
+          return
+        }
+        ctx.drawImage(img, 0, 0, width, height)
+
+        // 导出压缩后的 Base64 (转为 JPEG 格式以支持质量压缩)
+        const compressedBase64 = canvas.toDataURL('image/jpeg', quality)
+        resolve(compressedBase64)
+      }
+      img.onerror = (e) => reject(e)
+    }
+    reader.onerror = (e) => reject(e)
+  })
+}
+
+// 处理图片选择并执行压缩
+const handleFileChange = async (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  if (!file.type.startsWith('image/')) {
+    window.$ModalMessage.error('请上传图片文件')
+    target.value = ''
+    return
+  }
+
+  try {
+    // 限制单张原图大小 10MB
+    if (file.size > 10 * 1024 * 1024) {
+      window.$ModalMessage.warning('图片过大，正在为您进行高强度压缩...')
+    }
+
+    // 执行压缩：最大宽度 1000px，质量 0.6
+    const compressedBase64 = await compressImage(file, 1000, 0.6)
+    selectedImageBase64.value = compressedBase64
+
+  } catch (error) {
+    console.error('图片压缩失败:', error)
+    window.$ModalMessage.error('图片处理失败，请重试')
+  } finally {
+    // 清空 input，允许重复选择同一张图
+    target.value = ''
+  }
+}
+
+const clearSelectedImage = () => {
+  selectedImageBase64.value = null
+}
+
+// 辅助函数
+const isArrayContent = (content: any): content is ContentPart[] => Array.isArray(content)
+const extractTextFromParts = (parts: ContentPart[]) => parts.find(p => p.type === 'text')?.text || ''
+const extractImageFromParts = (parts: ContentPart[]) => {
+  const imgPart = parts.find(p => p.type === 'image_url') as { image_url: { url: string; }; } | undefined
+  return imgPart?.image_url.url || ''
+}
+// ================================================================
 
 const scrollToBottom = async () => {
   await nextTick()
@@ -56,18 +153,10 @@ const scrollToBottom = async () => {
   }
 }
 
-// ============== 核心改动：新的流式接收逻辑 ==============
-
-// 存放当前正在打字的 AI 回复的响应式变量
-const aiReplyingText = ref('')
-
-// 处理发送消息的逻辑
 const handleCreateStylized = async () => {
-  // 如果正在加载（打字机进行中），点击按钮则强行中止生成
   if (stylizingLoading.value) {
     businessStore.abortRequest()
     stylizingLoading.value = false
-    // 中止后，如果已经输出了一部分文字，把这部分文字保存为历史记录
     if (aiReplyingText.value) {
       await businessStore.appendMessage({
         role: 'assistant',
@@ -78,150 +167,115 @@ const handleCreateStylized = async () => {
     return
   }
 
-  // 校验空输入
-  if (refInputTextString.value && !inputTextString.value.trim()) {
-    inputTextString.value = ''
-    refInputTextString.value.focus()
+  const textTrimmed = inputTextString.value.trim()
+  if (!textTrimmed && !selectedImageBase64.value) {
+    refInputTextString.value?.focus()
     return
   }
 
-  // 1. 将用户的输入存入历史记录
-  const textContent = inputTextString.value
+  let payloadContent: string | ContentPart[] = textTrimmed
+
+  // 如果包含图片，组装成多模态结构
+  if (selectedImageBase64.value) {
+    payloadContent = [
+      {
+        type: 'image_url',
+        image_url: {
+          url: selectedImageBase64.value
+        }
+      }
+    ]
+    if (textTrimmed) {
+      payloadContent.push({
+        type: 'text',
+        text: textTrimmed
+      })
+    }
+  }
+
   inputTextString.value = ''
+  clearSelectedImage()
+
   await businessStore.appendMessage({
     role: 'user',
-    content: textContent
+    content: payloadContent
   })
-
   scrollToBottom()
 
-  // 2. 准备接收流式输出
   stylizingLoading.value = true
-  aiReplyingText.value = '' // 清空上一次的打字机内容
+  aiReplyingText.value = ''
 
-  // 3. 调用 Store 中封装好的 SSE 方法
   await businessStore.streamAssistantReply({
     onMessage: (textChunk) => {
-      // 接收到增量文本块，累加到响应式变量中
       aiReplyingText.value += textChunk
-      scrollToBottom() // 保证滚动条一直跟随最新文字
+      scrollToBottom()
     },
     onClose: async () => {
-      // 流式接收正常结束
       stylizingLoading.value = false
       if (aiReplyingText.value) {
-        // 将完整的 AI 回复存入上下文
         await businessStore.appendMessage({
           role: 'assistant',
           content: aiReplyingText.value
         })
       }
-      aiReplyingText.value = '' // 清空打字状态
+      aiReplyingText.value = ''
       setTimeout(() => refInputTextString.value?.focus())
     },
     onError: (err) => {
-      // 发生网络或配置错误
       stylizingLoading.value = false
       aiReplyingText.value = ''
-      window.$ModalMessage.error(err.message || '网络连接或 API Key 异常，请检查设置。')
-      setTimeout(() => refInputTextString.value?.focus())
+      window.$ModalMessage.error(err.message || '网络连接或 API Key 异常')
     }
   })
 }
 
-// ======================================================
-
-// 删除单个会话
 const handleDeleteSession = (id: string) => {
   window.$ModalDialog.warning({
     title: '删除对话',
     content: '确定要删除这条对话记录吗？',
     positiveText: '删除',
     negativeText: '取消',
-    onPositiveClick: () => {
-      businessStore.deleteSession(id)
-      window.$ModalMessage.success('对话已删除')
-    }
+    onPositiveClick: () => businessStore.deleteSession(id)
   })
 }
 
-// 监听会话切换：如果正在输出时切换了会话，强制中断请求
 watch(() => businessStore.activeSessionId, () => {
   if (stylizingLoading.value) {
     businessStore.abortRequest()
     stylizingLoading.value = false
     aiReplyingText.value = ''
   }
+  clearSelectedImage()
   setTimeout(scrollToBottom, 100)
 })
 
 const keys = useMagicKeys()
 const enterCommand = keys['Meta+Enter']
 const enterCtrl = keys['Ctrl+Enter']
-
 const activeElement = useActiveElement()
 const notUsingInput = computed(() => activeElement.value?.tagName !== 'TEXTAREA')
-
 const parser = new UAParser()
-const isMacos = computed(() => {
-  const os = parser.getOS()
-  if (!os) return
-
-  const osName = os.name ?? ''
-  return osName
-    .toLocaleLowerCase()
-    .includes?.('macos')
-})
+const isMacos = computed(() => (parser.getOS().name ?? '').toLowerCase().includes('macos'))
 
 const placeholder = computed(() => {
-  if (stylizingLoading.value) {
-    return `AI 思考中，点击右侧按钮可终止...`
-  }
-  return `输入任意问题, 按 ${ isMacos.value ? 'Command' : 'Ctrl' } + Enter 键快捷开始...`
+  if (stylizingLoading.value) return `AI 思考中...`
+  return `输入问题，或点击左侧上传图片...`
 })
 
-// 监听快捷键：Meta/Ctrl + Enter 触发发送
-watch(
-  () => enterCommand.value,
-  () => {
-    if (!isMacos.value || notUsingInput.value) return
-    if (stylizingLoading.value) return
-    if (!enterCommand.value) {
-      handleCreateStylized()
-    }
-  },
-  {
-    deep: true
-  }
-)
+watch(() => enterCommand.value, () => {
+  if (!isMacos.value || notUsingInput.value || stylizingLoading.value) return
+  if (!enterCommand.value) handleCreateStylized()
+}, {
+  deep: true
+})
 
-// 监听 Ctrl+Enter 快捷键（Windows/Linux）
-watch(
-  () => enterCtrl.value,
-  () => {
-    if (isMacos.value || notUsingInput.value) return
-    if (stylizingLoading.value) return
-    if (!enterCtrl.value) {
-      handleCreateStylized()
-    }
-  },
-  {
-    deep: true
-  }
-)
+watch(() => enterCtrl.value, () => {
+  if (isMacos.value || notUsingInput.value || stylizingLoading.value) return
+  if (!enterCtrl.value) handleCreateStylized()
+}, {
+  deep: true
+})
 
-// 初始化状态
-const handleResetState = () => {
-  inputTextString.value = ''
-  stylizingLoading.value = false
-  aiReplyingText.value = ''
-  nextTick(() => {
-    refInputTextString.value?.focus()
-  })
-}
-handleResetState()
-
-// 定义一个可复用的 PromptTag 组件，用于展示预设提示语并支持点击快速填充输入框
 const PromptTag = defineComponent({
   props: {
     text: {
@@ -230,14 +284,11 @@ const PromptTag = defineComponent({
     }
   },
   setup(props) {
-    const handleClick = () => {
-      inputTextString.value = props.text
-      nextTick(() => {
-        refInputTextString.value?.focus()
-      })
-    }
     return {
-      handleClick
+      handleClick: () => {
+        inputTextString.value = props.text
+        nextTick(() => refInputTextString.value?.focus())
+      }
     }
   },
   render() {
@@ -245,22 +296,16 @@ const PromptTag = defineComponent({
       <div
         b="~ solid transparent"
         hover="shadow-[--shadow] b-primary bg-#e8e8e8"
-        class={[
-          'px-10 py-2 rounded-7 text-12',
-          'max-w-230 transition-all-300 select-none cursor-pointer',
-          'c-#525252 bg-#ededed'
-        ]}
+        class="px-10 py-2 rounded-7 text-12 max-w-230 transition-all-300 select-none cursor-pointer c-#525252 bg-#ededed"
         style={{
           '--shadow': '3px 3px 3px -1px rgba(0,0,0,0.1)'
         }}
         onClick={this.handleClick}
       >
-        <n-ellipsis
-          tooltip={{
-            contentClass: 'wrapper-tooltip-scroller',
-            keepAliveOnHover: true
-          }}
-        >
+        <n-ellipsis tooltip={{
+          contentClass: 'wrapper-tooltip-scroller',
+          keepAliveOnHover: true
+        }}>
           {{
             tooltip: () => this.text,
             default: () => this.text
@@ -271,15 +316,12 @@ const PromptTag = defineComponent({
   }
 })
 
-const promptTextList = ref([
-  '写一段自我介绍',
-  '请用 Vue3 写一个倒计时组件'
-])
+const promptTextList = ref(['写一段自我介绍', '请用 Vue3 写一个倒计时组件'])
 </script>
 
 <template>
   <div class="w-full h-100vh flex bg-[#f4f6f8]">
-    <!-- 左侧会话列表侧边栏 -->
+    <!-- 左侧侧边栏 -->
     <div class="w-260px bg-[#fafbfc] border-r border-[#e5e5e5] flex flex-col hidden sm:flex">
       <div class="p-16 border-b border-[#e5e5e5]">
         <n-button
@@ -289,28 +331,20 @@ const promptTextList = ref([
           size="large"
           @click="businessStore.addSession()"
         >
-          <template #icon>
-            <div class="i-ic:round-add text-20"></div>
-          </template>
+          <template #icon><div class="i-ic:round-add text-20"></div></template>
           新建对话
         </n-button>
       </div>
-
-      <!-- 会话列表滚动区 -->
       <div class="flex-1 overflow-y-auto p-12">
         <div
           v-for="session in businessStore.sessions"
           :key="session.id"
           class="px-12 py-14 mb-8 rounded-8 cursor-pointer transition-colors flex items-center justify-between group border border-transparent"
-          :class="businessStore.activeSessionId === session.id
-            ? 'bg-[#e6f1fc] border-[#bae0ff] text-[#18a058] font-bold'
-            : 'hover:bg-[#f0f2f5] text-[#333]'"
+          :class="businessStore.activeSessionId === session.id ? 'bg-[#e6f1fc] border-[#bae0ff] text-[#18a058] font-bold' : 'hover:bg-[#f0f2f5] text-[#333]'"
           @click="businessStore.switchSession(session.id)"
         >
           <div class="i-hugeicons:chat-01 text-16 mr-8 opacity-70"></div>
-          <div class="truncate text-14 flex-1 mr-4">
-            {{ session.title }}
-          </div>
+          <div class="truncate text-14 flex-1 mr-4">{{ session.title }}</div>
           <div
             class="opacity-0 group-hover:opacity-100 transition-opacity p-4 rounded-4 hover:bg-white"
             @click.stop="handleDeleteSession(session.id)"
@@ -319,8 +353,6 @@ const promptTextList = ref([
           </div>
         </div>
       </div>
-
-      <!-- 侧边栏底部添加设置按钮 -->
       <div class="p-12 border-t border-[#e5e5e5]">
         <div
           class="px-12 py-12 rounded-8 cursor-pointer transition-colors hover:bg-[#f0f2f5] text-[#333] flex items-center"
@@ -332,7 +364,7 @@ const promptTextList = ref([
       </div>
     </div>
 
-    <!-- 右侧聊天主区域 -->
+    <!-- 右侧聊天区域 -->
     <div class="flex-1 h-full min-w-0 relative">
       <LayoutCenterPanel
         :loading="loading"
@@ -353,15 +385,13 @@ const promptTextList = ref([
                   class="text-16 line-height-16 pr-10"
                 >
                   <span class="lt-xs:hidden text-14 c-gray-500 mr-10">模型驱动：</span>
-                  <div flex="~ justify-center items-center">
-                    <n-select
-                      v-model:value="businessStore.systemModelName"
-                      class="w-180 lt-xs:w-160 font-bold"
-                      placeholder="请选择模型"
-                      :disabled="stylizingLoading"
-                      :options="modelListSelections"
-                    />
-                  </div>
+                  <n-select
+                    v-model:value="businessStore.systemModelName"
+                    class="w-180 lt-xs:w-160 font-bold"
+                    placeholder="请选择"
+                    :disabled="stylizingLoading"
+                    :options="modelListSelections"
+                  />
                 </div>
               </template>
             </NavigationNavBar>
@@ -375,7 +405,7 @@ const promptTextList = ref([
             class="overflow-y-auto px-16 pt-20 sm:px-40"
           >
             <template v-if="businessStore.messageList?.length > 0 || stylizingLoading">
-              <!-- 历史消息渲染 -->
+              <!-- 渲染历史记录 -->
               <div
                 v-for="(msg, index) in businessStore.messageList"
                 :key="index"
@@ -390,17 +420,24 @@ const promptTextList = ref([
                 </div>
 
                 <div
-                  class="max-w-[85%] rounded-12 p-16 shadow-sm"
-                  :class="msg.role === 'user'
-                    ? 'bg-[#e5e5e5] text-[#333] rounded-tr-4'
-                    : 'bg-[#fff] border border-[#eee] text-[#333] markdown-wrapper rounded-tl-4'"
+                  class="max-w-[85%] rounded-12 p-16 shadow-sm overflow-hidden"
+                  :class="msg.role === 'user' ? 'bg-[#e5e5e5] text-[#333] rounded-tr-4' : 'bg-[#fff] border border-[#eee] text-[#333] markdown-wrapper rounded-tl-4'"
                 >
                   <template v-if="msg.role === 'user'">
-                    <div class="whitespace-pre-wrap">{{ msg.content }}</div>
+                    <!-- 多模态渲染 -->
+                    <template v-if="isArrayContent(msg.content)">
+                      <div class="flex flex-col items-end gap-2">
+                        <img
+                          v-if="extractImageFromParts(msg.content)"
+                          :src="extractImageFromParts(msg.content)"
+                          class="max-w-200px max-h-200px rounded-8 object-cover border border-[#ddd]"
+                        >
+                        <div class="whitespace-pre-wrap">{{ extractTextFromParts(msg.content) }}</div>
+                      </div>
+                    </template>
+                    <template v-else><div class="whitespace-pre-wrap">{{ msg.content }}</div></template>
                   </template>
-                  <template v-else>
-                    <div v-html="renderMarkdownText(msg.content)"></div>
-                  </template>
+                  <template v-else><div v-html="renderMarkdownText(msg.content as string)"></div></template>
                 </div>
 
                 <div
@@ -411,7 +448,7 @@ const promptTextList = ref([
                 </div>
               </div>
 
-              <!-- 正在输出的流式打字机占位 -->
+              <!-- 打字机 -->
               <div
                 v-show="stylizingLoading"
                 class="flex justify-start mb-24"
@@ -420,42 +457,26 @@ const promptTextList = ref([
                   <div class="i-hugeicons:ai-chat-02 text-white text-20"></div>
                 </div>
                 <div class="max-w-[85%] rounded-12 rounded-tl-4 border border-[#eee] bg-[#fff] p-16 shadow-sm min-w-100">
-                  <!-- 调用改造后的瘦身版 MarkdownPreview -->
                   <MarkdownPreview
                     :text="aiReplyingText"
-                    :model="businessStore.currentModelItem?.modelName"
                     :loading="stylizingLoading"
                   />
                 </div>
               </div>
             </template>
-
             <template v-else>
               <n-empty
                 size="large"
                 class="font-bold h-full flex items-center justify-center mt-[-10%]"
                 description="VueChat Pro"
-              >
-                <template #icon>
-                  <n-icon class="text-primary opacity-60 text-60">
-                    <div class="i-hugeicons:ai-chat-02"></div>
-                  </n-icon>
-                </template>
-                <div class="text-14 font-normal text-gray-400 mt-10">随时开始一段新的对话</div>
-              </n-empty>
+              />
             </template>
           </div>
 
-          <!-- 底部输入区域 -->
-          <div
-            flex="~ col items-center"
-            class="px-16 pb-20 pt-10 sm:px-40 bg-white/80 backdrop-blur-md border-t border-[#f0f0f0]"
-          >
-            <div
-              w-full
-              flex="~ justify-start"
-              class="pb-10"
-            >
+          <!-- 底部输入操作区 -->
+          <div class="flex flex-col items-center px-16 pb-20 pt-10 sm:px-40 bg-white/80 backdrop-blur-md border-t border-[#f0f0f0]">
+            <!-- Prompt快捷语 -->
+            <div class="w-full flex justify-start pb-10">
               <n-space>
                 <PromptTag
                   v-for="(textItem, idx) in promptTextList"
@@ -464,59 +485,93 @@ const promptTextList = ref([
                 />
               </n-space>
             </div>
+
+            <!-- 图片预览区 -->
             <div
-              relative
-              flex="1"
-              w-full
+              v-if="selectedImageBase64"
+              class="w-full flex justify-start mb-10"
             >
-              <n-input
-                ref="refInputTextString"
-                v-model:value="inputTextString"
-                type="textarea"
-                autofocus
-                h-full
-                class="textarea-resize-none text-15 shadow-sm"
-                :style="{
-                  '--n-border-radius': '16px',
-                  '--n-padding-left': '20px',
-                  '--n-padding-right': '60px',
-                  '--n-padding-vertical': '14px',
-                  '--n-border': '1px solid #e0e0e0',
-                  '--n-border-focus': '1px solid #18a058',
-                  '--n-box-shadow-focus': '0 0 0 2px rgba(24, 160, 88, 0.2)'
-                }"
-                :placeholder="placeholder"
-              />
-              <n-float-button
-                position="absolute"
-                :right="12"
-                bottom="12"
-                :width="40"
-                :height="40"
-                :type="stylizingLoading ? 'default' : (inputTextString.trim() ? 'primary' : 'default')"
-                color
-                :class="[stylizingLoading && 'opacity-90']"
-                @click.stop="handleCreateStylized()"
+              <div class="relative inline-block">
+                <img
+                  :src="selectedImageBase64"
+                  class="h-60px rounded-8 border border-gray-200 shadow-sm"
+                  alt="preview"
+                >
+                <div
+                  class="absolute -top-6 -right-6 w-20 h-20 bg-red-500 rounded-full flex items-center justify-center text-white cursor-pointer shadow-md hover:bg-red-600"
+                  @click="clearSelectedImage"
+                >
+                  <div class="i-ic:round-close text-14"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 【修改核心】修复了这里的 Flex 布局，保证 Input 高度正常 -->
+            <div class="relative flex w-full items-end gap-10">
+              <!-- 隐藏上传 -->
+              <input
+                ref="fileInputRef"
+                type="file"
+                accept="image/*"
+                class="hidden"
+                @change="handleFileChange"
               >
-                <!-- 如果正在加载，按钮变为停止图标（方形） -->
-                <div
-                  v-if="stylizingLoading"
-                  class="i-ic:round-stop c-#fff text-20"
-                ></div>
-                <!-- 否则显示发送图标 -->
-                <div
-                  v-else
-                  class="text-20"
-                  :class="inputTextString.trim() ? 'c-#fff i-hugeicons:sent' : 'c-#999 i-hugeicons:start-up-02'"
-                ></div>
-              </n-float-button>
+
+              <!-- 上传按钮 -->
+              <n-button
+                circle
+                size="large"
+                class="mb-2 shrink-0 shadow-sm transition-all duration-300"
+                :type="isVisionModel ? 'default' : 'tertiary'"
+                @click="triggerFileUpload"
+              >
+                <template #icon>
+                  <div
+                    class="i-hugeicons:image-02 text-20"
+                    :class="isVisionModel ? 'text-primary' : 'text-gray-400'"
+                  ></div>
+                </template>
+              </n-button>
+
+              <!-- 输入框 -->
+              <div class="relative flex-1">
+                <n-input
+                  ref="refInputTextString"
+                  v-model:value="inputTextString"
+                  type="textarea"
+                  autofocus
+                  :autosize="{ minRows: 1, maxRows: 5 }"
+                  class="text-15 shadow-sm rounded-16"
+                  :style="{'--n-padding-left': '16px', '--n-padding-right': '60px', '--n-padding-vertical': '12px'}"
+                  :placeholder="placeholder"
+                />
+                <n-float-button
+                  position="absolute"
+                  :right="8"
+                  bottom="6"
+                  :width="36"
+                  :height="36"
+                  :type="stylizingLoading ? 'default' : ((inputTextString.trim() || selectedImageBase64) ? 'primary' : 'default')"
+                  @click.stop="handleCreateStylized()"
+                >
+                  <div
+                    v-if="stylizingLoading"
+                    class="i-ic:round-stop c-#fff text-20"
+                  ></div>
+                  <div
+                    v-else
+                    class="text-20"
+                    :class="(inputTextString.trim() || selectedImageBase64) ? 'c-#fff i-hugeicons:sent' : 'c-#999 i-hugeicons:start-up-02'"
+                  ></div>
+                </n-float-button>
+              </div>
             </div>
           </div>
         </div>
       </LayoutCenterPanel>
     </div>
 
-    <!-- 新增设置弹窗 (Settings Modal) -->
+    <!-- 全局设置弹窗 -->
     <n-modal
       v-model:show="showSettings"
       preset="card"
@@ -529,7 +584,6 @@ const promptTextList = ref([
         type="line"
         animated
       >
-        <!-- API 配置面板 -->
         <n-tab-pane
           name="api"
           tab="模型接口配置"
@@ -539,7 +593,7 @@ const promptTextList = ref([
             type="info"
             class="mb-20"
           >
-            您的 API Key 仅保存在浏览器本地（LocalStorage），不会上传至任何第三方服务器。留空则默认使用系统配置。
+            配置仅保存在本地（LocalStorage）。
           </n-alert>
           <n-form
             label-placement="left"
@@ -562,6 +616,17 @@ const promptTextList = ref([
                 show-password-on="click"
               />
             </n-form-item>
+
+            <!-- 【新增】添加了 Qwen 的配置入口
+            <n-form-item label="Qwen (通义千问)">
+              <n-input
+                v-model:value="configStore.apiKeys.qwen"
+                placeholder="填写通义千问或硅基流动 Key"
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item> -->
+
             <n-form-item label="Moonshot">
               <n-input
                 v-model:value="configStore.apiKeys.moonshot"
@@ -570,18 +635,8 @@ const promptTextList = ref([
                 show-password-on="click"
               />
             </n-form-item>
-            <n-form-item label="Spark 星火">
-              <n-input
-                v-model:value="configStore.apiKeys.spark"
-                placeholder="key:secret 格式"
-                type="password"
-                show-password-on="click"
-              />
-            </n-form-item>
           </n-form>
         </n-tab-pane>
-
-        <!-- 通用参数面板 -->
         <n-tab-pane
           name="general"
           tab="通用参数"
@@ -598,9 +653,7 @@ const promptTextList = ref([
                 <span class="w-40px text-right font-mono">{{ configStore.temperature }}</span>
               </div>
             </n-form-item>
-            <div class="text-12 text-gray-400 mt-[-10px] mb-20">
-              值越大，AI 回复的随机性和创造性越高；值越小，回复越严谨确切。推荐：写代码 0.1，写文章 0.7+
-            </div>
+            <div class="text-12 text-gray-400 mt-[-10px] mb-20">值越大，回复随机性越高；值越小，回复越严谨确切。</div>
           </n-form>
         </n-tab-pane>
       </n-tabs>
@@ -619,8 +672,6 @@ const promptTextList = ref([
 </template>
 
 <style lang="scss" scoped>
-/* 自定义滚动条美化 */
-
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -628,10 +679,9 @@ const promptTextList = ref([
 
 ::-webkit-scrollbar-thumb {
   background-color: rgb(0 0 0 / 15%);
-  border-radius: 10px;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+::-webkit-scrollbar-thumb {
+  border-radius: 10px;
 }
 </style>

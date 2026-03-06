@@ -114,14 +114,19 @@ export const useBusinessStore = defineStore('business-store', {
     async appendMessage(message: ChatMessage) {
       const session = this.activeSession
       if (!session) return
-
       session.messages.push(message)
 
-      // 如果是当前对话的第一条用户消息，自动提取前15个字作为标题
+      // 生成标题逻辑：如果 content 是数组，需要提取出文本部分
       if (session.messages.length === 1 && message.role === 'user') {
-        session.title = message.content.slice(0, 15) + (message.content.length > 15 ? '...' : '')
+        let textForTitle = ''
+        if (typeof message.content === 'string') {
+          textForTitle = message.content
+        } else if (Array.isArray(message.content)) {
+          const textPart = message.content.find(p => p.type === 'text')
+          textForTitle = textPart ? (textPart as any).text : '图片消息'
+        }
+        session.title = textForTitle.slice(0, 15) + (textForTitle.length > 15 ? '...' : '')
       }
-
       await this.saveHistory()
     },
 
