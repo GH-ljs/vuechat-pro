@@ -4,6 +4,7 @@ import { defaultModelName, modelMappingList } from '@/components/MarkdownPreview
 import type { ChatMessage } from '@/components/MarkdownPreview/models'
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
 
 // 定义单个会话的数据结构
 export interface ChatSession {
@@ -17,6 +18,7 @@ export interface BusinessState {
   systemModelName: string
   sessions: ChatSession[]
   activeSessionId: string
+  ctrl: AbortController | null // 用于控制中止请求
 }
 
 // 配置 IndexedDB
@@ -34,7 +36,8 @@ export const useBusinessStore = defineStore('business-store', {
   state: (): BusinessState => ({
     systemModelName: defaultModelName,
     sessions: [],
-    activeSessionId: ''
+    activeSessionId: '',
+    ctrl: null
   }),
   getters: {
     currentModelItem(state) {
@@ -132,46 +135,84 @@ export const useBusinessStore = defineStore('business-store', {
       }
     },
 
+    // 强行中止当前请求
+    abortRequest() {
+      if (this.ctrl) {
+        this.ctrl.abort()
+        this.ctrl = null
+      }
+    },
+
     /**
-     * 发送大模型请求（使用 activeSession 的消息作为上下文）
+     * 重构后：使用 fetchEventSource 发起 SSE 请求
      */
-    async createAssistantWriterStylized(): Promise<{error: number
-      reader: ReadableStreamDefaultReader<string> | null}> {
-      return new Promise((resolve) => {
-        if (!this.currentModelItem?.chatFetch) {
-          return resolve({
-            error: 1,
-            reader: null
-          })
-        }
+    async streamAssistantReply(callbacks: {
+      onMessage: (text: string) => void
+      onClose: () => void
+      onError: (err: any) => void
+    }) {
+      const modelItem = this.currentModelItem
+      if (!modelItem) {
+        callbacks.onError(new Error('未找到模型配置'))
+        return
+      }
 
-        // 截取最近的 10 条对话避免 Token 超限
-        const contextLimit = 10
-        const contextPayload = this.messageList.slice(-contextLimit)
+      // 截取最近的 10 条对话
+      const contextPayload = this.messageList.slice(-10)
 
-        this.currentModelItem.chatFetch(contextPayload)
-          .then((res) => {
-            if (res.body) {
-              const reader = res.body
-                .pipeThrough(new TextDecoderStream())
-                .pipeThrough(TransformUtils.splitStream('\n'))
-                .getReader()
-              resolve({
-                error: 0,
-                reader
-              })
-            } else {
-              resolve({
-                error: 1,
-                reader: null
-              })
+      // 获取配置
+      const options = modelItem.getFetchOptions(contextPayload)
+
+      this.ctrl = new AbortController()
+
+      try {
+        await fetchEventSource(options.url, {
+          method: 'POST',
+          headers: options.headers,
+          body: options.body,
+          signal: this.ctrl.signal,
+          async onopen(response) {
+            if (response.ok && response.headers.get('content-type')?.includes('text/event-stream')) {
+              // 一切正常
+            } else if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+              // 客户端报错（如 Token 错误）直接抛出，不重试
+              throw new Error(`API 请求失败: ${ response.status } ${ response.statusText }`)
             }
-          })
-          .catch(() => resolve({
-            error: 1,
-            reader: null
-          }))
-      })
+          },
+          onmessage(msg) {
+            // 完美的完整数据块，自带事件名校验
+            if (msg.event === 'FatalError') {
+              throw new Error(msg.data)
+            }
+            if (!msg.data || msg.data === '[DONE]') {
+              return // 结束标志
+            }
+            try {
+              const json = JSON.parse(msg.data)
+              const textChunk = modelItem.extractContent(json)
+              if (textChunk) {
+                callbacks.onMessage(textChunk)
+              }
+            } catch (err) {
+              console.warn('忽略不可解析的块:', msg.data)
+            }
+          },
+          onclose() {
+            callbacks.onClose()
+          },
+          onerror(err) {
+            callbacks.onError(err)
+            throw err // 阻止底层自动重试
+          }
+        })
+      } catch (err) {
+        // 如果是被主动取消的，不算是 Error
+        if (typeof err === 'object' && err !== null && 'name' in err && (err as { name?: string; }).name === 'AbortError') {
+          callbacks.onClose()
+        } else {
+          callbacks.onError(err)
+        }
+      }
     }
   }
 })

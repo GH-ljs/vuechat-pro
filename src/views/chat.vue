@@ -1,9 +1,8 @@
 <script lang="tsx" setup>
-import { modelMappingList, triggerModelTermination } from '@/components/MarkdownPreview/models'
+import { modelMappingList } from '@/components/MarkdownPreview/models'
 import { renderMarkdownText } from '@/components/MarkdownPreview/plugins/markdown'
 import { type InputInst } from 'naive-ui'
 import type { SelectBaseOption } from 'naive-ui/es/select/src/interface'
-import { isGithubDeployed } from '@/config'
 import { UAParser } from 'ua-parser-js'
 import { useConfigStore } from '@/store/config'
 
@@ -15,13 +14,14 @@ const configStore = useConfigStore()
 // 设置弹窗状态
 const showSettings = ref(false)
 
-onMounted(() => {// 组件挂载时，加载历史记录
+onMounted(() => {
+  // 组件挂载时，加载历史记录
   if (businessStore.loadHistory) {
     businessStore.loadHistory()
   }
 })
 
-// 将模型列表转换为 Select 组件的选项格式，并根据部署环境控制某些模型的可选状态
+// 将模型列表转换为 Select 组件的选项格式
 const modelListSelections = computed(() => {
   return modelMappingList.map<SelectBaseOption>((modelItem) => {
     return {
@@ -46,12 +46,6 @@ const stylizingLoading = ref(false)
 const inputTextString = ref('')
 const refInputTextString = ref<InputInst | null>()
 
-/**
- * 输出字符串 Reader 流（风格化的）
- */
-const outputTextReader = ref<ReadableStreamDefaultReader | null>()
-
-const refReaderMarkdownPreview = ref<any>()
 // 滚动容器的 ref
 const messageContainer = ref<HTMLElement>()
 
@@ -61,63 +55,37 @@ const scrollToBottom = async () => {
     messageContainer.value.scrollTop = messageContainer.value.scrollHeight
   }
 }
-// 打字机失败的统一处理函数
-const onFailedReader = () => {
-  outputTextReader.value = null
-  stylizingLoading.value = false
-  if (refReaderMarkdownPreview.value) {
-    refReaderMarkdownPreview.value.initializeEnd()
-  }
-  window.$ModalMessage.error('转换失败，可能 API Key 配置有误或服务限流。')
-  setTimeout(() => refInputTextString.value?.focus())
-  triggerModelTermination()
-}
 
-// 接收 MarkdownPreview 内部打字机结束时的完整文本
-const onCompletedReader = async () => {
-  stylizingLoading.value = false
+// ============== 核心改动：新的流式接收逻辑 ==============
 
-  // 获取当前 markdown-preview 里的完整内容
-  const finalContent = refReaderMarkdownPreview.value?.displayText || ''
-
-  if (finalContent) {
-    // 将 AI 的回复存入上下文中
-    await businessStore.appendMessage({
-      role: 'assistant',
-      content: finalContent
-    })
-  }
-
-  // 重置预览组件的状态，等待下一次输入
-  if (refReaderMarkdownPreview.value) {
-    refReaderMarkdownPreview.value.resetStatus()
-  }
-
-  setTimeout(() => {
-    if (refInputTextString.value) {
-      refInputTextString.value.focus()
-    }
-  })
-  triggerModelTermination()
-  scrollToBottom()
-}
+// 存放当前正在打字的 AI 回复的响应式变量
+const aiReplyingText = ref('')
 
 // 处理发送消息的逻辑
 const handleCreateStylized = async () => {
-  // 若正在加载，则点击后恢复初始状态
+  // 如果正在加载（打字机进行中），点击按钮则强行中止生成
   if (stylizingLoading.value) {
-    refReaderMarkdownPreview.value.abortReader()
-    onCompletedReader()
+    businessStore.abortRequest()
+    stylizingLoading.value = false
+    // 中止后，如果已经输出了一部分文字，把这部分文字保存为历史记录
+    if (aiReplyingText.value) {
+      await businessStore.appendMessage({
+        role: 'assistant',
+        content: aiReplyingText.value
+      })
+      aiReplyingText.value = ''
+    }
     return
   }
 
+  // 校验空输入
   if (refInputTextString.value && !inputTextString.value.trim()) {
     inputTextString.value = ''
     refInputTextString.value.focus()
     return
   }
 
-  // 1. 将用户的输入存入 messageList
+  // 1. 将用户的输入存入历史记录
   const textContent = inputTextString.value
   inputTextString.value = ''
   await businessStore.appendMessage({
@@ -129,28 +97,39 @@ const handleCreateStylized = async () => {
 
   // 2. 准备接收流式输出
   stylizingLoading.value = true
-  if (refReaderMarkdownPreview.value) {
-    refReaderMarkdownPreview.value.resetStatus()
-    refReaderMarkdownPreview.value.initializeStart()
-  }
+  aiReplyingText.value = '' // 清空上一次的打字机内容
 
-  // 3. 发起请求（注意：这里 store 内部会去读取 messageList 发送）
-  const { error, reader } = await businessStore.createAssistantWriterStylized()
-
-  if (error) {
-    onFailedReader()
-    return
-  }
-
-  if (reader) {
-    outputTextReader.value = reader
-  }
+  // 3. 调用 Store 中封装好的 SSE 方法
+  await businessStore.streamAssistantReply({
+    onMessage: (textChunk) => {
+      // 接收到增量文本块，累加到响应式变量中
+      aiReplyingText.value += textChunk
+      scrollToBottom() // 保证滚动条一直跟随最新文字
+    },
+    onClose: async () => {
+      // 流式接收正常结束
+      stylizingLoading.value = false
+      if (aiReplyingText.value) {
+        // 将完整的 AI 回复存入上下文
+        await businessStore.appendMessage({
+          role: 'assistant',
+          content: aiReplyingText.value
+        })
+      }
+      aiReplyingText.value = '' // 清空打字状态
+      setTimeout(() => refInputTextString.value?.focus())
+    },
+    onError: (err) => {
+      // 发生网络或配置错误
+      stylizingLoading.value = false
+      aiReplyingText.value = ''
+      window.$ModalMessage.error(err.message || '网络连接或 API Key 异常，请检查设置。')
+      setTimeout(() => refInputTextString.value?.focus())
+    }
+  })
 }
 
-// import { useDialog, useMessage } from 'naive-ui'
-
-// const dialog = useDialog()
-// const message = useMessage()
+// ======================================================
 
 // 删除单个会话
 const handleDeleteSession = (id: string) => {
@@ -166,11 +145,12 @@ const handleDeleteSession = (id: string) => {
   })
 }
 
-// 监听会话切换：如果正在输出时切换了会话，强制中断打字机
+// 监听会话切换：如果正在输出时切换了会话，强制中断请求
 watch(() => businessStore.activeSessionId, () => {
   if (stylizingLoading.value) {
-    refReaderMarkdownPreview.value?.abortReader()
+    businessStore.abortRequest()
     stylizingLoading.value = false
+    aiReplyingText.value = ''
   }
   setTimeout(scrollToBottom, 100)
 })
@@ -195,7 +175,7 @@ const isMacos = computed(() => {
 
 const placeholder = computed(() => {
   if (stylizingLoading.value) {
-    return `输入任意问题...`
+    return `AI 思考中，点击右侧按钮可终止...`
   }
   return `输入任意问题, 按 ${ isMacos.value ? 'Command' : 'Ctrl' } + Enter 键快捷开始...`
 })
@@ -205,9 +185,7 @@ watch(
   () => enterCommand.value,
   () => {
     if (!isMacos.value || notUsingInput.value) return
-
     if (stylizingLoading.value) return
-
     if (!enterCommand.value) {
       handleCreateStylized()
     }
@@ -222,9 +200,7 @@ watch(
   () => enterCtrl.value,
   () => {
     if (isMacos.value || notUsingInput.value) return
-
     if (stylizingLoading.value) return
-
     if (!enterCtrl.value) {
       handleCreateStylized()
     }
@@ -234,16 +210,14 @@ watch(
   }
 )
 
-// 初始化状态：清空输入框，重置加载状态，重置预览组件
+// 初始化状态
 const handleResetState = () => {
   inputTextString.value = ''
-
   stylizingLoading.value = false
+  aiReplyingText.value = ''
   nextTick(() => {
     refInputTextString.value?.focus()
   })
-  refReaderMarkdownPreview.value?.abortReader()
-  refReaderMarkdownPreview.value?.resetStatus()
 }
 handleResetState()
 
@@ -401,6 +375,7 @@ const promptTextList = ref([
             class="overflow-y-auto px-16 pt-20 sm:px-40"
           >
             <template v-if="businessStore.messageList?.length > 0 || stylizingLoading">
+              <!-- 历史消息渲染 -->
               <div
                 v-for="(msg, index) in businessStore.messageList"
                 :key="index"
@@ -436,6 +411,7 @@ const promptTextList = ref([
                 </div>
               </div>
 
+              <!-- 正在输出的流式打字机占位 -->
               <div
                 v-show="stylizingLoading"
                 class="flex justify-start mb-24"
@@ -444,13 +420,11 @@ const promptTextList = ref([
                   <div class="i-hugeicons:ai-chat-02 text-white text-20"></div>
                 </div>
                 <div class="max-w-[85%] rounded-12 rounded-tl-4 border border-[#eee] bg-[#fff] p-16 shadow-sm min-w-100">
+                  <!-- 调用改造后的瘦身版 MarkdownPreview -->
                   <MarkdownPreview
-                    ref="refReaderMarkdownPreview"
-                    v-model:reader="outputTextReader"
+                    :text="aiReplyingText"
                     :model="businessStore.currentModelItem?.modelName"
-                    :transform-stream-fn="businessStore.currentModelItem?.transformStreamValue"
-                    @failed="onFailedReader"
-                    @completed="onCompletedReader"
+                    :loading="stylizingLoading"
                   />
                 </div>
               </div>
@@ -472,6 +446,7 @@ const promptTextList = ref([
             </template>
           </div>
 
+          <!-- 底部输入区域 -->
           <div
             flex="~ col items-center"
             class="px-16 pb-20 pt-10 sm:px-40 bg-white/80 backdrop-blur-md border-t border-[#f0f0f0]"
@@ -518,15 +493,17 @@ const promptTextList = ref([
                 bottom="12"
                 :width="40"
                 :height="40"
-                :type="stylizingLoading ? 'primary' : (inputTextString.trim() ? 'primary' : 'default')"
+                :type="stylizingLoading ? 'default' : (inputTextString.trim() ? 'primary' : 'default')"
                 color
                 :class="[stylizingLoading && 'opacity-90']"
                 @click.stop="handleCreateStylized()"
               >
+                <!-- 如果正在加载，按钮变为停止图标（方形） -->
                 <div
                   v-if="stylizingLoading"
-                  class="i-svg-spinners:pulse-2 c-#fff text-20"
+                  class="i-ic:round-stop c-#fff text-20"
                 ></div>
+                <!-- 否则显示发送图标 -->
                 <div
                   v-else
                   class="text-20"
