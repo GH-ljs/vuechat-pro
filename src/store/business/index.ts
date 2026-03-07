@@ -59,6 +59,12 @@ export const useBusinessStore = defineStore('business-store', {
       const savedActiveId = await localforage.getItem<string>('activeSessionId')
 
       if (savedSessions && savedSessions.length > 0) {
+        // 给旧消息补充 id，防止虚拟列表渲染报错
+        savedSessions.forEach(session => {
+          session.messages.forEach(msg => {
+            if (!msg.id) msg.id = uuidv4()
+          })
+        })
         this.sessions = savedSessions
         // 恢复上次激活的会话，或者默认选中第一个
         this.activeSessionId = savedActiveId && savedSessions.some(s => s.id === savedActiveId)
@@ -114,6 +120,7 @@ export const useBusinessStore = defineStore('business-store', {
     async appendMessage(message: ChatMessage) {
       const session = this.activeSession
       if (!session) return
+      if (!message.id) message.id = uuidv4()
       session.messages.push(message)
 
       // 生成标题逻辑：如果 content 是数组，需要提取出文本部分

@@ -5,11 +5,13 @@ import { setupStore } from '@/store'
 
 import App from '@/App.vue'
 
+import VueVirtualScroller from 'vue-virtual-scroller'
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 
 const app = createApp(App)
 
 function setupPlugins() {
-  // ...
+  app.use(VueVirtualScroller)
 }
 
 async function setupApp() {

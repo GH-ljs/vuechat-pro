@@ -12,7 +12,6 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
-    404: typeof import('./src/components/404.vue')['default']
     ClipBoard: typeof import('./src/components/ClipBoard/index.vue')['default']
     CustomTooltip: typeof import('./src/components/CustomTooltip/index.vue')['default']
     IconFont: typeof import('./src/components/IconFont/index.vue')['default']
@@ -31,7 +30,6 @@ declare module 'vue' {
     NButton: typeof import('naive-ui')['NButton']
     NConfigProvider: typeof import('naive-ui')['NConfigProvider']
     NDialogProvider: typeof import('naive-ui')['NDialogProvider']
-    NEllipsis: typeof import('naive-ui')['NEllipsis']
     NEmpty: typeof import('naive-ui')['NEmpty']
     NFloatButton: typeof import('naive-ui')['NFloatButton']
     NForm: typeof import('naive-ui')['NForm']
@@ -42,10 +40,9 @@ declare module 'vue' {
     NMessageProvider: typeof import('naive-ui')['NMessageProvider']
     NModal: typeof import('naive-ui')['NModal']
     NNotificationProvider: typeof import('naive-ui')['NNotificationProvider']
-    NotFound: typeof import('./src/components/404.vue')['default']
+    NotFound: typeof import('./src/components/NotFound.vue')['default']
     NSelect: typeof import('naive-ui')['NSelect']
     NSlider: typeof import('naive-ui')['NSlider']
-    NSpace: typeof import('naive-ui')['NSpace']
     NSpin: typeof import('naive-ui')['NSpin']
     NTabPane: typeof import('naive-ui')['NTabPane']
     NTabs: typeof import('naive-ui')['NTabs']
@@ -59,7 +56,6 @@ declare module 'vue' {
 
 // For TSX support
 declare global {
-  const 404: typeof import('./src/components/404.vue')['default']
   const ClipBoard: typeof import('./src/components/ClipBoard/index.vue')['default']
   const CustomTooltip: typeof import('./src/components/CustomTooltip/index.vue')['default']
   const IconFont: typeof import('./src/components/IconFont/index.vue')['default']
@@ -78,7 +74,6 @@ declare global {
   const NButton: typeof import('naive-ui')['NButton']
   const NConfigProvider: typeof import('naive-ui')['NConfigProvider']
   const NDialogProvider: typeof import('naive-ui')['NDialogProvider']
-  const NEllipsis: typeof import('naive-ui')['NEllipsis']
   const NEmpty: typeof import('naive-ui')['NEmpty']
   const NFloatButton: typeof import('naive-ui')['NFloatButton']
   const NForm: typeof import('naive-ui')['NForm']
@@ -89,10 +84,9 @@ declare global {
   const NMessageProvider: typeof import('naive-ui')['NMessageProvider']
   const NModal: typeof import('naive-ui')['NModal']
   const NNotificationProvider: typeof import('naive-ui')['NNotificationProvider']
-  const NotFound: typeof import('./src/components/404.vue')['default']
+  const NotFound: typeof import('./src/components/NotFound.vue')['default']
   const NSelect: typeof import('naive-ui')['NSelect']
   const NSlider: typeof import('naive-ui')['NSlider']
-  const NSpace: typeof import('naive-ui')['NSpace']
   const NSpin: typeof import('naive-ui')['NSpin']
   const NTabPane: typeof import('naive-ui')['NTabPane']
   const NTabs: typeof import('naive-ui')['NTabs']

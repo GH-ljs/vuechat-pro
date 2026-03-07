@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => {
       : '/',
     server: {
       port: 2048,
+      strictPort: true,
       proxy: {
         '/spark': {
           target: 'https://spark-api-open.xf-yun.com',

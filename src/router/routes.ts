@@ -12,7 +12,7 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/:pathMatch(.*)',
     name: '404',
-    component: () => import('@/components/404.vue')
+    component: () => import('@/components/NotFound.vue')
   }
 ]
 

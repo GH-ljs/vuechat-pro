@@ -39,7 +39,8 @@ const inputTextString = ref('')
 const refInputTextString = ref<InputInst | null>()
 
 const aiReplyingText = ref('')
-const messageContainer = ref<HTMLElement>()
+const messageContainer = ref<HTMLElement>() // keep for any remaining ref if any
+
 
 // ================= 状态 1：图片上传 =================
 const selectedImageBase64 = ref<string | null>(null)
@@ -162,7 +163,7 @@ const handleDocChange = async (e: Event) => {
 
     worker.postMessage({
       type: 'PARSE_DOC',
-      arrayBuffer,      // 纯净的二进制流
+      arrayBuffer, // 纯净的二进制流
       fileName: file.name,
       fileType
     })
@@ -191,9 +192,13 @@ const extractImageFromParts = (parts: ContentPart[]) => {
   return imgPart?.image_url.url || ''
 }
 
+const messageScroller = ref<any>(null)
+
 const scrollToBottom = async () => {
   await nextTick()
-  if (messageContainer.value) messageContainer.value.scrollTop = messageContainer.value.scrollHeight
+  if (messageScroller.value?.$el) {
+    messageScroller.value.$el.scrollTop = messageScroller.value.$el.scrollHeight
+  }
 }
 
 // 核心发送逻辑
@@ -307,6 +312,7 @@ const handleDeleteSession = (id: string) => {
     onPositiveClick: () => businessStore.deleteSession(id)
   })
 }
+
 watch(() => businessStore.activeSessionId, () => {
   if (stylizingLoading.value) { businessStore.abortRequest(); stylizingLoading.value = false; aiReplyingText.value = '' }
   clearSelectedImage()
@@ -321,21 +327,39 @@ watch(() => businessStore.activeSessionId, () => {
     <div class="w-260px bg-[#fafbfc] border-r border-[#e5e5e5] flex flex-col hidden sm:flex">
       <!-- ... -->
       <div class="p-16 border-b border-[#e5e5e5]">
-        <n-button dashed block type="primary" size="large" @click="businessStore.addSession()">
+        <n-button
+          dashed
+          block
+          type="primary"
+          size="large"
+          @click="businessStore.addSession()"
+        >
           <template #icon><div class="i-ic:round-add text-20"></div></template>新建对话
         </n-button>
       </div>
       <div class="flex-1 overflow-y-auto p-12">
-        <div v-for="session in businessStore.sessions" :key="session.id" class="px-12 py-14 mb-8 rounded-8 cursor-pointer transition-colors flex items-center justify-between group border border-transparent" :class="businessStore.activeSessionId === session.id ? 'bg-[#e6f1fc] border-[#bae0ff] text-[#18a058] font-bold' : 'hover:bg-[#f0f2f5] text-[#333]'" @click="businessStore.switchSession(session.id)">
+        <div
+          v-for="session in businessStore.sessions"
+          :key="session.id"
+          class="px-12 py-14 mb-8 rounded-8 cursor-pointer transition-colors flex items-center justify-between group border border-transparent"
+          :class="businessStore.activeSessionId === session.id ? 'bg-[#e6f1fc] border-[#bae0ff] text-[#18a058] font-bold' : 'hover:bg-[#f0f2f5] text-[#333]'"
+          @click="businessStore.switchSession(session.id)"
+        >
           <div class="i-hugeicons:chat-01 text-16 mr-8 opacity-70"></div>
           <div class="truncate text-14 flex-1 mr-4">{{ session.title }}</div>
-          <div class="opacity-0 group-hover:opacity-100 transition-opacity p-4 rounded-4 hover:bg-white" @click.stop="handleDeleteSession(session.id)">
+          <div
+            class="opacity-0 group-hover:opacity-100 transition-opacity p-4 rounded-4 hover:bg-white"
+            @click.stop="handleDeleteSession(session.id)"
+          >
             <div class="i-ic:round-delete text-18 text-red-500 hover:text-red-700"></div>
           </div>
         </div>
       </div>
       <div class="p-12 border-t border-[#e5e5e5]">
-        <div class="px-12 py-12 rounded-8 cursor-pointer transition-colors hover:bg-[#f0f2f5] text-[#333] flex items-center" @click="showSettings = true">
+        <div
+          class="px-12 py-12 rounded-8 cursor-pointer transition-colors hover:bg-[#f0f2f5] text-[#333] flex items-center"
+          @click="showSettings = true"
+        >
           <div class="i-hugeicons:settings-01 text-18 mr-8"></div><div class="text-14 font-medium">全局设置</div>
         </div>
       </div>
@@ -343,71 +367,106 @@ watch(() => businessStore.activeSessionId, () => {
 
     <!-- 右侧主区域 -->
     <div class="flex-1 h-full min-w-0 relative">
-      <LayoutCenterPanel :loading="loading" class="h-full !rounded-none">
-        <div flex="~ col" h-full>
-          <div flex="~ justify-between items-center" class="border-b border-[#eee] py-8">
+      <LayoutCenterPanel
+        :loading="loading"
+        class="h-full !rounded-none"
+      >
+        <div
+          flex="~ col"
+          h-full
+        >
+          <div
+            flex="~ justify-between items-center"
+            class="border-b border-[#eee] py-8"
+          >
             <NavigationNavBar>
               <template #right>
-                <div flex="~ justify-center items-center wrap" class="text-16 line-height-16 pr-10">
+                <div
+                  flex="~ justify-center items-center wrap"
+                  class="text-16 line-height-16 pr-10"
+                >
                   <span class="lt-xs:hidden text-14 c-gray-500 mr-10">模型驱动：</span>
-                  <n-select v-model:value="businessStore.systemModelName" class="w-180 font-bold" :options="modelListSelections" />
+                  <n-select
+                    v-model:value="businessStore.systemModelName"
+                    class="w-180 font-bold"
+                    :options="modelListSelections"
+                  />
                 </div>
               </template>
             </NavigationNavBar>
           </div>
 
-          <div ref="messageContainer" flex="1 ~ col" min-h-0 pb-20 class="overflow-y-auto px-16 pt-20 sm:px-40">
+          <DynamicScroller
+            ref="messageScroller"
+            :items="businessStore.messageList"
+            :min-item-size="60"
+            key-field="id"
+            class="flex-1 min-h-0 pb-20 overflow-y-auto px-16 pt-20 sm:px-40"
+          >
             <!-- 对话气泡渲染 (不变) -->
-            <template v-if="businessStore.messageList?.length > 0 || stylizingLoading">
-              <div
-                v-for="(msg, index) in businessStore.messageList"
-                :key="index"
-                class="mb-24 flex"
-                :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
+            <template #default="{ item: msg, index, active }">
+              <DynamicScrollerItem
+                :item="msg"
+                :active="active"
+                :size-dependencies="[msg.content]"
+                :data-index="index"
               >
-                <!-- AI 头像 -->
                 <div
-                  v-if="msg.role !== 'user'"
-                  class="w-36 h-36 rounded-full bg-primary flex items-center justify-center mr-12 shrink-0 mt-4"
+                  class="mb-24 flex"
+                  :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
                 >
-                  <div class="i-hugeicons:ai-chat-02 text-white text-20"></div>
-                </div>
-                <div
-                  class="max-w-[85%] rounded-12 p-16 shadow-sm overflow-hidden"
-                  :class="msg.role === 'user' ? 'bg-[#e5e5e5] text-[#333] rounded-tr-4' : 'bg-[#fff] border border-[#eee] text-[#333] markdown-wrapper rounded-tl-4'"
-                >
-                  <template v-if="msg.role === 'user'">
-                    <template v-if="isArrayContent(msg.content)">
-                      <div class="flex flex-col items-end gap-2">
-                        <img
-                          v-if="extractImageFromParts(msg.content)"
-                          :src="extractImageFromParts(msg.content)"
-                          class="max-w-200px max-h-200px rounded-8 object-cover border border-[#ddd]"
-                        >
-                        <div class="whitespace-pre-wrap">{{ extractTextFromParts(msg.content) }}</div>
-                      </div>
+                  <!-- AI 头像 -->
+                  <div
+                    v-if="msg.role !== 'user'"
+                    class="w-36 h-36 rounded-full bg-primary flex items-center justify-center mr-12 shrink-0 mt-4"
+                  >
+                    <div class="i-hugeicons:ai-chat-02 text-white text-20"></div>
+                  </div>
+                  <div
+                    class="max-w-[85%] rounded-12 p-16 shadow-sm overflow-hidden"
+                    :class="msg.role === 'user' ? 'bg-[#e5e5e5] text-[#333] rounded-tr-4' : 'bg-[#fff] border border-[#eee] text-[#333] markdown-wrapper rounded-tl-4'"
+                  >
+                    <template v-if="msg.role === 'user'">
+                      <template v-if="isArrayContent(msg.content)">
+                        <div class="flex flex-col items-end gap-2">
+                          <img
+                            v-if="extractImageFromParts(msg.content)"
+                            :src="extractImageFromParts(msg.content)"
+                            class="max-w-200px max-h-200px rounded-8 object-cover border border-[#ddd]"
+                          >
+                          <div class="whitespace-pre-wrap">{{ extractTextFromParts(msg.content) }}</div>
+                        </div>
+                      </template>
+                      <template v-else><div class="whitespace-pre-wrap">{{ msg.content }}</div></template>
                     </template>
-                    <template v-else><div class="whitespace-pre-wrap">{{ msg.content }}</div></template>
-                  </template>
-                  <template v-else><div v-html="renderMarkdownText(msg.content as string)"></div></template>
+                    <template v-else><div v-html="renderMarkdownText(msg.content as string)"></div></template>
+                  </div>
+                  <!-- 用户头像 -->
+                  <div
+                    v-if="msg.role === 'user'"
+                    class="w-36 h-36 rounded-full bg-gray-300 flex items-center justify-center ml-12 shrink-0 mt-4"
+                  >
+                    <div class="i-hugeicons:user text-white text-20"></div>
+                  </div>
                 </div>
-                <!-- 用户头像 -->
-                <div
-                  v-if="msg.role === 'user'"
-                  class="w-36 h-36 rounded-full bg-gray-300 flex items-center justify-center ml-12 shrink-0 mt-4"
-                >
-                  <div class="i-hugeicons:user text-white text-20"></div>
-                </div>
-              </div>
+              </DynamicScrollerItem>
+            </template>
+            <template #after>
               <!-- 打字机 -->
-              <div v-show="stylizingLoading" class="flex justify-start mb-24">
+              <div
+                v-if="stylizingLoading"
+                class="flex justify-start mb-24"
+              >
                 <div class="w-36 h-36 rounded-full bg-primary flex items-center justify-center mr-12 shrink-0 mt-4"><div class="i-hugeicons:ai-chat-02 text-white text-20"></div></div>
                 <div class="max-w-[85%] rounded-12 rounded-tl-4 border border-[#eee] bg-[#fff] p-16 shadow-sm min-w-100">
-                  <MarkdownPreview :text="aiReplyingText" :loading="stylizingLoading" />
+                  <MarkdownPreview
+                    :text="aiReplyingText"
+                    :loading="stylizingLoading"
+                  />
                 </div>
               </div>
             </template>
-          </div>
+          </DynamicScroller>
 
           <!-- 底部发送区域 -->
           <div class="flex flex-col items-center px-16 pb-20 pt-10 sm:px-40 bg-white/80 backdrop-blur-md border-t border-[#f0f0f0]">
@@ -418,12 +477,18 @@ watch(() => businessStore.activeSessionId, () => {
               class="mb-10"
             >
               <!-- 图片预览 -->
-              <div v-if="selectedImageBase64" class="relative inline-block">
+              <div
+                v-if="selectedImageBase64"
+                class="relative inline-block"
+              >
                 <img
                   :src="selectedImageBase64"
                   class="h-60px rounded-8 border border-gray-200 shadow-sm"
                 >
-                <div class="absolute -top-6 -right-6 w-20 h-20 bg-red-500 rounded-full flex items-center justify-center text-white cursor-pointer shadow-md" @click="clearSelectedImage">
+                <div
+                  class="absolute -top-6 -right-6 w-20 h-20 bg-red-500 rounded-full flex items-center justify-center text-white cursor-pointer shadow-md"
+                  @click="clearSelectedImage"
+                >
                   <div class="i-ic:round-close text-14"></div>
                 </div>
               </div>
@@ -521,11 +586,18 @@ watch(() => businessStore.activeSessionId, () => {
                   :placeholder="placeholder"
                 />
                 <n-float-button
-                  position="absolute" :right="8" bottom="6" :width="36" :height="36"
+                  position="absolute"
+                  :right="8"
+                  bottom="6"
+                  :width="36"
+                  :height="36"
                   :type="stylizingLoading ? 'default' : ((inputTextString.trim() || selectedImageBase64 || selectedDocFile) ? 'primary' : 'default')"
                   @click.stop="handleCreateStylized()"
                 >
-                  <div v-if="stylizingLoading" class="i-ic:round-stop c-#fff text-20"></div>
+                  <div
+                    v-if="stylizingLoading"
+                    class="i-ic:round-stop c-#fff text-20"
+                  ></div>
                   <div
                     v-else
                     class="text-20"
@@ -539,7 +611,105 @@ watch(() => businessStore.activeSessionId, () => {
       </LayoutCenterPanel>
     </div>
 
-    <!-- ... 全局设置弹窗保持原有代码即可 ... -->
+    <n-modal
+      v-model:show="showSettings"
+      preset="card"
+      title="全局设置"
+      class="w-500px max-w-90vw"
+      :bordered="false"
+      size="huge"
+    >
+      <n-tabs
+        type="line"
+        animated
+      >
+        <n-tab-pane
+          name="api"
+          tab="模型接口配置"
+        >
+          <n-alert
+            title="数据隐私安全"
+            type="info"
+            class="mb-20"
+          >
+            配置仅保存在本地（LocalStorage）。
+          </n-alert>
+          <n-form
+            label-placement="left"
+            label-width="auto"
+            require-mark-placement="right-hanging"
+          >
+            <n-form-item label="DeepSeek">
+              <n-input
+                v-model:value="configStore.apiKeys.deepseek"
+                placeholder="sk-..."
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item>
+            <n-form-item label="SiliconFlow">
+              <n-input
+                v-model:value="configStore.apiKeys.siliconflow"
+                placeholder="sk-..."
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item>
+
+            <!-- 【新增】添加了 Qwen 的配置入口
+            <n-form-item label="Qwen (通义千问)">
+              <n-input
+                v-model:value="configStore.apiKeys.qwen"
+                placeholder="填写通义千问或硅基流动 Key"
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item> -->
+
+            <n-form-item label="Moonshot">
+              <n-input
+                v-model:value="configStore.apiKeys.moonshot"
+                placeholder="sk-..."
+                type="password"
+                show-password-on="click"
+              />
+            </n-form-item>
+          </n-form>
+        </n-tab-pane>
+        <n-tab-pane
+          name="general"
+          tab="通用参数"
+        >
+          <n-form>
+            <n-form-item label="发散度 (Temperature)">
+              <div class="flex-1 w-full flex items-center gap-4">
+                <n-slider
+                  v-model:value="configStore.temperature"
+                  :step="0.1"
+                  :min="0"
+                  :max="2"
+                />
+                <span class="w-40px text-right font-mono">{{ configStore.temperature }}</span>
+              </div>
+            </n-form-item>
+            <div class="text-12 text-gray-400 mt-[-10px] mb-20">
+              值越大，回复随
+              机性越高；值越小，回复越严谨确切。
+            </div>                                        -
+          </n-form>
+        </n-tab-pane>
+      </n-tabs>
+      <template #footer>
+        <div class="flex justify-end mt-10">
+          <n-button
+            type="primary"
+            @click="showSettings = false"
+          >
+            完成
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 

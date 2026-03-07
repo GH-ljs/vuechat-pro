@@ -9,6 +9,7 @@ export type ContentPart =
 
 // Message 接口
 export interface ChatMessage {
+  id?: string | number // 虚拟列表需要的唯一标识符
   role: 'system' | 'user' | 'assistant'
   content: string | ContentPart[] // 支持多模态内容
   attachContext?: string // 用于存放文档解析出来的前置上下文，界面不显示，只在底层拼接
