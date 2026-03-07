@@ -13,6 +13,7 @@
 dist
 cache
 dist-ssr
+stats.html
 
 # misc
 .DS_Store

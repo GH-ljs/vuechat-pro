@@ -18,6 +18,11 @@ import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd())
+  const enableVisualizer = env.VITE_VISUALIZER === 'true'
+  const visualizerPlugins = enableVisualizer ? [visualizer({
+    filename: 'dist/stats.html',
+    open: false
+  })] : []
 
   return {
     base: env.VITE_ROUTER_MODE === 'hash'
@@ -179,7 +184,7 @@ export default defineConfig(({ mode }) => {
         defaultClass: 'unplugin-icon',
         jsx: 'react'
       }),
-      visualizer()
+      ...visualizerPlugins
     ],
     resolve: {
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.less', '.css'],

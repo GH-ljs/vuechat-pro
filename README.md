@@ -215,6 +215,14 @@ pnpm dev
 pnpm build
 ```
 
+### 构建体积分析报告
+
+```bash
+pnpm build:analyze
+```
+
+分析报告会生成到 dist/stats.html，不会再默认落到仓库根目录。
+
 ### GitHub Pages 构建
 
 ```bash
