@@ -1,5 +1,8 @@
 <script lang="tsx" setup>
 import { systemTitle } from '@/base'
+import { useAppStore } from '@/store/hooks/useAppStore'
+
+const appStore = useAppStore()
 
 interface Props {
   transparent?: boolean
@@ -38,8 +41,15 @@ const handleToRepo = () => {
       class="header-left"
     >
       <div
-        flex="~ items-center justify-center"
-        class="text-20"
+        class="sm:hidden text-24 cursor-pointer mr-10 flex items-center justify-center p-4 hover:bg-gray-100 rounded"
+        @click="appStore.showMobileDrawer = true"
+      >
+        <div class="i-ic:round-menu" />
+      </div>
+
+      <div
+        flex="~ items-center"
+        class="text-20 lt-sm:hidden"
         select-none
         cursor-pointer
         @click="handleToRepo()"
@@ -66,9 +76,8 @@ const handleToRepo = () => {
 <style lang="scss" scoped>
 
 .navigation-nav-header-container {
-  --at-apply: w-full flex items-center justify-center;
+  --at-apply: w-full flex items-center justify-between;
   --at-apply: px-16 py-10;
-  --at-apply: lt-lg:flex-col;
 
   .header-left,
   .header-right {
