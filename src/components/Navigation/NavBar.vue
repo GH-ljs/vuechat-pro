@@ -44,7 +44,7 @@ const handleToRepo = () => {
         class="sm:hidden text-24 cursor-pointer mr-10 flex items-center justify-center p-4 hover:bg-gray-100 rounded"
         @click="appStore.showMobileDrawer = true"
       >
-        <div class="i-ic:round-menu" />
+        <div class="i-ic:round-menu"></div>
       </div>
 
       <div

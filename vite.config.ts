@@ -13,6 +13,8 @@ import IconsResolver from 'unplugin-icons/resolver'
 
 import { NaiveUiResolver } from 'unplugin-vue-components/resolvers'
 import { loadEnv } from 'vite'
+import { VitePWA } from 'vite-plugin-pwa'
+import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd())
@@ -52,6 +54,39 @@ export default defineConfig(({ mode }) => {
       }
     },
     plugins: [
+      VitePWA({
+        registerType: 'autoUpdate',
+        manifest: {
+          name: 'VueChat Pro',
+          short_name: 'VueChat',
+          theme_color: '#ffffff',
+          icons: [
+            {
+              src: '/pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png'
+            },
+            {
+              src: '/pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png'
+            },
+            {
+              src: '/pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any maskable'
+            }
+          ]
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,ttf}'],
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024 // 10MB，规避因体积过大导致 PWA 无法缓存
+        },
+        devOptions: {
+          enabled: true
+        }
+      }),
       UnoCSS(),
       vue(),
       raw({
@@ -143,7 +178,8 @@ export default defineConfig(({ mode }) => {
         defaultStyle: '',
         defaultClass: 'unplugin-icon',
         jsx: 'react'
-      })
+      }),
+      visualizer()
     ],
     resolve: {
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.less', '.css'],
