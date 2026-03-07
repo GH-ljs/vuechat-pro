@@ -1,9 +1,8 @@
 import { createRouterGuards } from '@/router/permission'
 import routes from './routes'
 import { createWebHashHistory } from 'vue-router'
-import { isGithubDeployed } from '@/config'
 
-const history = isGithubDeployed
+const history = process.env.VITE_ROUTER_MODE === 'hash'
   ? createWebHashHistory()
   : createWebHistory()
 
