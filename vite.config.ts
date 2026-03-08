@@ -86,7 +86,55 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,ttf}'],
-          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024 // 10MB，规避因体积过大导致 PWA 无法缓存
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB，规避因体积过大导致 PWA 无法缓存
+          runtimeCaching: [
+            {
+              // 匹配外部的图片资源，解决跨域不透明响应（Opaque Response）问题
+              urlPattern: /^https:\/\/.*\.(png|jpg|jpeg|svg|gif|webp)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'external-image-cache',
+                expiration: {
+                  maxEntries: 100, // 最多缓存 100 张
+                  maxAgeSeconds: 30 * 24 * 60 * 60 // 30天有效
+                },
+                cacheableResponse: {
+                  statuses: [0, 200] // 核心：允许缓存状态码为 0 的"不透明响应"
+                }
+              }
+            },
+            {
+              // 匹配外部字体库（如 Google Fonts）跨域缓存
+              urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'google-fonts-cache',
+                expiration: {
+                  maxEntries: 10,
+                  maxAgeSeconds: 365 * 24 * 60 * 60 // 1年有效
+                },
+                cacheableResponse: {
+                  statuses: [0, 200]
+                }
+              }
+            },
+            {
+              // 匹配外部 API 的跨域请求缓存（需视业务情况开启），网络优先，并排除状态码为 0 避免缓存失败导致持续前端白屏
+              urlPattern: /^https:\/\/api\.(siliconflow\.cn|deepseek\.com|moonshot\.cn)\/.*/i,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'external-api-cache',
+                networkTimeoutSeconds: 5,
+                expiration: {
+                  maxEntries: 50,
+                  maxAgeSeconds: 24 * 60 * 60 // 1天有效
+                },
+                cacheableResponse: {
+                  statuses: [200] // API 数据只缓存成功的(200)状态，不缓存 0 状态
+                }
+              }
+            }
+          ]
         },
         devOptions: {
           enabled: true
