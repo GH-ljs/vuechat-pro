@@ -15,8 +15,6 @@ import DocParserWorker from '@/workers/docParser.worker?worker'
 
 const { width: windowWidth } = useWindowSize()
 
-const route = useRoute()
-const router = useRouter()
 const businessStore = useBusinessStore()
 const configStore = useConfigStore()
 const appStore = useAppStore()
@@ -45,7 +43,6 @@ const inputTextString = ref('')
 const refInputTextString = ref<InputInst | null>()
 
 const aiReplyingText = ref('')
-const messageContainer = ref<HTMLElement>() // keep for any remaining ref if any
 
 
 // ================= 状态 1：图片上传 =================
@@ -99,7 +96,7 @@ const handleFileChange = async (e: Event) => {
   }
   try {
     selectedImageBase64.value = await compressImage(file, 1000, 0.6)
-  } catch (error) {
+  } catch {
     window.$ModalMessage.error('图片压缩失败')
   } finally {
     target.value = ''
@@ -200,10 +197,25 @@ const extractImageFromParts = (parts: ContentPart[]) => {
 
 const messageScroller = ref<any>(null)
 
-const scrollToBottom = async () => {
+// ================= 智能自动滚动 =================
+// 当用户主动上滚时暂停自动滚动，当用户滚回底部附近时恢复
+const isUserScrolledUp = ref(false)
+const SCROLL_THRESHOLD = 80 // 距底部 80px 内视为"在底部"
+
+const handleScrollerScroll = () => {
+  const el = messageScroller.value?.$el as HTMLElement | undefined
+  if (!el) return
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  isUserScrolledUp.value = distanceFromBottom > SCROLL_THRESHOLD
+}
+
+const scrollToBottom = async (force = false) => {
+  // 非强制模式下，如果用户已手动上滚，则不自动拉回
+  if (!force && isUserScrolledUp.value) return
   await nextTick()
   if (messageScroller.value?.$el) {
     messageScroller.value.$el.scrollTop = messageScroller.value.$el.scrollHeight
+    isUserScrolledUp.value = false
   }
 }
 
@@ -253,7 +265,7 @@ const handleCreateStylized = async () => {
   clearDoc()
 
   await businessStore.appendMessage(newUserMessage)
-  scrollToBottom()
+  scrollToBottom(true) // 发送消息：强制滚动到底部
 
   stylizingLoading.value = true
   aiReplyingText.value = ''
@@ -313,7 +325,8 @@ watch(() => businessStore.activeSessionId, () => {
   if (stylizingLoading.value) { businessStore.abortRequest(); stylizingLoading.value = false; aiReplyingText.value = '' }
   clearSelectedImage()
   clearDoc()
-  setTimeout(scrollToBottom, 100)
+  isUserScrolledUp.value = false
+  setTimeout(() => scrollToBottom(true), 100)
 })
 
 watch(() => windowWidth.value, (newWidth) => {
@@ -378,6 +391,7 @@ watch(() => windowWidth.value, (newWidth) => {
             :min-item-size="60"
             key-field="id"
             class="flex-1 min-h-0 pb-20 overflow-y-auto px-16 pt-20 sm:px-40"
+            @scroll.passive="handleScrollerScroll"
           >
             <!-- 对话气泡渲染 (不变) -->
             <template #default="{ item: msg, index, active }">
@@ -611,7 +625,7 @@ watch(() => windowWidth.value, (newWidth) => {
             type="info"
             class="mb-20"
           >
-            配置仅保存在本地（LocalStorage）。
+            配置经 AES 加密后保存在本地（LocalStorage），不会上传到任何服务器。
           </n-alert>
           <n-form
             label-placement="left"
@@ -682,7 +696,7 @@ watch(() => windowWidth.value, (newWidth) => {
         <div class="flex justify-end mt-10">
           <n-button
             type="primary"
-            @click="showSettings = false"
+            @click="configStore.persistKeys(); configStore.persistTemperature(); showSettings = false"
           >
             完成
           </n-button>

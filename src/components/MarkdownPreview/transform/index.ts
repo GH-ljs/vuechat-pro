@@ -1,7 +1,7 @@
 // 处理SSE格式的数据
-const processSSE = (buffer, controller, splitOn) => {
+const processSSE = (buffer: string, controller: TransformStreamDefaultController<string>, splitOn: string): string => {
   const parts = buffer.split(splitOn)
-  const lastPart = parts.pop()
+  const lastPart = parts.pop() ?? ''
 
   for (const part of parts) {
     const trimmedPart = part.trim()
@@ -13,7 +13,7 @@ const processSSE = (buffer, controller, splitOn) => {
         try {
           JSON.parse(content)
           controller.enqueue(content)
-        } catch (e) {
+        } catch {
           // 不是JSON，发送原文本
           controller.enqueue(content)
         }
@@ -27,7 +27,7 @@ const processSSE = (buffer, controller, splitOn) => {
 }
 
 // 处理可能包含多个JSON对象的数据
-const processJSON = (buffer, controller) => {
+const processJSON = (buffer: string, controller: TransformStreamDefaultController<string>): string => {
   let remaining = buffer
   let processed = false
 
@@ -46,7 +46,7 @@ const processJSON = (buffer, controller) => {
           validJSONEndIndex = i
           break
         }
-      } catch (e) {
+      } catch {
         // 继续尝试
       }
     }
@@ -57,7 +57,7 @@ const processJSON = (buffer, controller) => {
         controller.enqueue(validJSON)
         remaining = remaining.substring(validJSONEndIndex).trim()
         processed = true
-      } catch (e) {
+      } catch {
         // 如果最终解析出错，跳出循环
         break
       }
@@ -70,10 +70,10 @@ const processJSON = (buffer, controller) => {
   return processed ? remaining : buffer
 }
 
-export const splitStream = (splitOn) => {
+export const splitStream = (splitOn: string): TransformStream<string, string> => {
   let buffer = ''
 
-  return new TransformStream({
+  return new TransformStream<string, string>({
     transform(chunk, controller) {
       buffer += chunk
       const trimmedBuffer = buffer.trim()
@@ -107,7 +107,7 @@ export const splitStream = (splitOn) => {
         // 最后尝试处理为JSON
         try {
           controller.enqueue(buffer.trim())
-        } catch (e) {
+        } catch {
           // 不是JSON，发送原文本
           controller.enqueue(buffer)
         }

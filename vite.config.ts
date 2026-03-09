@@ -253,6 +253,11 @@ export default defineConfig(({ mode }) => {
           additionalData: `@use '@/styles/naive-variables.scss' as *;`
         }
       }
+    },
+    test: {
+      environment: 'jsdom',
+      globals: true,
+      include: ['src/**/*.{test,spec}.{ts,tsx}']
     }
   }
 })

@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import DOMPurify from 'dompurify'
 import hljs from './highlight'
 import markdownItHighlight from 'markdown-it-highlightjs'
 import { preWrapperPlugin } from './preWrapper'
@@ -18,7 +19,7 @@ import {
 import '@nzoth/toolkit/styles'
 
 const md = new MarkdownIt({
-  html: true,
+  html: false,
   linkify: true,
   typographer: true
 })
@@ -116,7 +117,16 @@ export const renderMarkdownText = (content: string) => {
   const thinkTransformed = transformThinkMarkdown(content)
   const mathTransformed = transformMathMarkdown(thinkTransformed)
   const mermaidTransformed = transformMermaid(mathTransformed)
-  return md.render(mermaidTransformed)
+  const rawHtml = md.render(mermaidTransformed)
+  return DOMPurify.sanitize(rawHtml, {
+    // 仅允许 Mermaid/KaTeX 等渲染所需的额外标签，不允许 iframe/form/object 等危险标签
+    ADD_TAGS: ['think'],
+    ADD_ATTR: ['target', 'rel', 'class', 'style'],
+    ALLOW_DATA_ATTR: false,
+    // 禁止所有 URI 类属性中的 javascript: 协议
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
+    FORBID_TAGS: ['iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button', 'select']
+  })
 }
 
 // 触发 Mermaid 渲染

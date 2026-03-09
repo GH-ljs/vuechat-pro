@@ -19,12 +19,17 @@ export interface ChatMessage {
 export interface FetchOptions {
   url: string
   headers: Record<string, string>
-  body: any
+  body: string // JSON.stringify 后的请求体
 }
 
 // 【新增核心拦截器】在发送给大模型前，动态拼装系统提示词
-const buildPayloadMessages = (context: ChatMessage[]) => {
-  const payload: any[] = []
+interface PayloadMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string | ContentPart[]
+}
+
+const buildPayloadMessages = (context: ChatMessage[]): PayloadMessage[] => {
+  const payload: PayloadMessage[] = []
 
   context.forEach(msg => {
     // 如果这条消息带着文档上下文，插入一个 System 角色给大模型提供背景知识
@@ -50,7 +55,7 @@ interface TypesModelLLM {
   // 不再在这里发起 fetch，而是返回给外部统一的 fetch 选项
   getFetchOptions: (context: ChatMessage[]) => FetchOptions
   // 用于从标准的 SSE JSON 返回体中提取真正的文本
-  extractContent: (jsonData: any) => string
+  extractContent: (jsonData: Record<string, unknown>) => string
   supportVision?: boolean // 可选字段，标明是否支持识图
 }
 

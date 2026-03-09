@@ -25,6 +25,30 @@ const switchSession = (id: string) => {
     appStore.showMobileDrawer = false
   }
 }
+
+// 导出对话
+const handleExport = () => {
+  businessStore.exportSessions()
+}
+
+// 导入对话
+const importInputRef = ref<HTMLInputElement | null>(null)
+const handleImportClick = () => {
+  importInputRef.value?.click()
+}
+const handleImportFile = async (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  try {
+    await businessStore.importSessions(file)
+    window.$ModalMessage.success('导入成功')
+  } catch (err: any) {
+    window.$ModalMessage.error(err.message || '导入失败')
+  } finally {
+    target.value = ''
+  }
+}
 </script>
 
 <template>
@@ -59,6 +83,27 @@ const switchSession = (id: string) => {
       </div>
     </div>
     <div class="p-12 border-t border-[#e5e5e5]">
+      <input
+        ref="importInputRef"
+        type="file"
+        accept=".json"
+        class="hidden"
+        @change="handleImportFile"
+      >
+      <div class="flex items-center gap-8 mb-8">
+        <div
+          class="flex-1 px-8 py-10 rounded-8 cursor-pointer transition-colors hover:bg-[#f0f2f5] text-[#333] flex items-center justify-center"
+          @click="handleExport"
+        >
+          <div class="i-hugeicons:download-02 text-16 mr-4"></div><div class="text-12">导出</div>
+        </div>
+        <div
+          class="flex-1 px-8 py-10 rounded-8 cursor-pointer transition-colors hover:bg-[#f0f2f5] text-[#333] flex items-center justify-center"
+          @click="handleImportClick"
+        >
+          <div class="i-hugeicons:upload-02 text-16 mr-4"></div><div class="text-12">导入</div>
+        </div>
+      </div>
       <div
         class="px-12 py-12 rounded-8 cursor-pointer transition-colors hover:bg-[#f0f2f5] text-[#333] flex items-center"
         @click="emits('show-settings'); appStore.showMobileDrawer = false"

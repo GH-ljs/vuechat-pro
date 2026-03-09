@@ -1,5 +1,4 @@
 import { defineStore } from 'pinia'
-import * as TransformUtils from '@/components/MarkdownPreview/transform'
 import { defaultModelName, modelMappingList } from '@/components/MarkdownPreview/models'
 import type { ChatMessage } from '@/components/MarkdownPreview/models'
 import localforage from 'localforage'
@@ -147,6 +146,54 @@ export const useBusinessStore = defineStore('business-store', {
       }
     },
 
+    // 8. 导出所有会话为 JSON 文件
+    exportSessions() {
+      const data = JSON.parse(JSON.stringify(this.sessions))
+      const blob = new Blob([JSON.stringify({
+        version: 1,
+        sessions: data
+      }, null, 2)], {
+        type: 'application/json'
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `vuechat-export-${ new Date().toISOString().slice(0, 10) }.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    },
+
+    // 9. 从 JSON 文件导入会话（合并模式，不覆盖）
+    async importSessions(file: File) {
+      const text = await file.text()
+      const parsed = JSON.parse(text)
+
+      // 校验基本结构
+      if (!parsed || !Array.isArray(parsed.sessions)) {
+        throw new Error('无效的导入文件格式')
+      }
+
+      const imported = parsed.sessions as ChatSession[]
+      const existingIds = new Set(this.sessions.map(s => s.id))
+
+      for (const session of imported) {
+        // 校验必要字段
+        if (!session.id || !session.title || !Array.isArray(session.messages)) continue
+        // 跳过已存在的会话
+        if (existingIds.has(session.id)) continue
+        // 确保每条消息有 id
+        session.messages.forEach(msg => {
+          if (!msg.id) msg.id = uuidv4()
+        })
+        this.sessions.push(session)
+      }
+
+      if (this.sessions.length > 0 && !this.activeSessionId) {
+        this.activeSessionId = this.sessions[0].id
+      }
+      await this.saveHistory()
+    },
+
     // 强行中止当前请求
     abortRequest() {
       if (this.ctrl) {
@@ -205,7 +252,7 @@ export const useBusinessStore = defineStore('business-store', {
               if (textChunk) {
                 callbacks.onMessage(textChunk)
               }
-            } catch (err) {
+            } catch {
               console.warn('忽略不可解析的块:', msg.data)
             }
           },
