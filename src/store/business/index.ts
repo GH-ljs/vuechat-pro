@@ -205,24 +205,35 @@ export const useBusinessStore = defineStore('business-store', {
     /**
      * 重构后：使用 fetchEventSource 发起 SSE 请求
      */
-    async streamAssistantReply(callbacks: {
-      onMessage: (text: string) => void
-      onClose: () => void
-      onError: (err: any) => void
-    }) {
+    async streamAssistantReply(
+      callbacks: {
+        onMessage: (text: string) => void
+        onClose: (isAborted?: boolean) => void
+        onError: (err: any) => void
+      },
+      customPayload?: ChatMessage[]
+    ) {
       const modelItem = this.currentModelItem
       if (!modelItem) {
         callbacks.onError(new Error('未找到模型配置'))
         return
       }
 
-      // 截取最近的 10 条对话
-      const contextPayload = this.messageList.slice(-10)
+      // 如果有续传上下文则使用续传，否则截取最近 10 条
+      const contextPayload = customPayload || this.messageList.slice(-10)
 
       // 获取配置
       const options = modelItem.getFetchOptions(contextPayload)
 
       this.ctrl = new AbortController()
+
+      let triggerClosed = false
+      const safeClose = (isAborted: boolean) => {
+        if (!triggerClosed) {
+          triggerClosed = true
+          callbacks.onClose(isAborted)
+        }
+      }
 
       try {
         await fetchEventSource(options.url, {
@@ -257,17 +268,27 @@ export const useBusinessStore = defineStore('business-store', {
             }
           },
           onclose() {
-            callbacks.onClose()
+            // fetchEventSource 底层会在后端正常结束流时触发 onclose
+            safeClose(false)
           },
           onerror(err) {
             callbacks.onError(err)
             throw err // 阻止底层自动重试
           }
         })
-      } catch (err) {
-        // 如果是被主动取消的，不算是 Error
-        if (typeof err === 'object' && err !== null && 'name' in err && (err as { name?: string; }).name === 'AbortError') {
-          callbacks.onClose()
+
+        // 【新增修复】fetchEventSource 在收到 AbortController 信号时，会直接静默执行 resolve() 而不走任何回调或抛错！
+        // 因此我们要在这里检查如果流被客户端手动掐断（比如切会话），需要强制触发生命周期
+        if (this.ctrl.signal.aborted) {
+          safeClose(true)
+        } else {
+          safeClose(false)
+        }
+
+      } catch (err: any) {
+        // 区分异常 Error(如断网底层异常等)
+        if (err?.name === 'AbortError') {
+          safeClose(true)
         } else {
           callbacks.onError(err)
         }

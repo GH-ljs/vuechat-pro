@@ -8,7 +8,9 @@ import { useConfigStore } from '@/store/config'
 import { useAppStore } from '@/store/hooks/useAppStore'
 import MarkdownPreview from '@/components/MarkdownPreview/index.vue'
 import ChatSideBarContent from './components/ChatSideBarContent.vue'
-import { useWindowSize } from '@vueuse/core'
+import { useWindowSize, useEventListener, useNetwork } from '@vueuse/core'
+import { v4 as uuidv4 } from 'uuid'
+import { throttle } from 'lodash-es'
 
 // 引入文档解析 Worker (Vite 语法)
 import DocParserWorker from '@/workers/docParser.worker?worker'
@@ -21,8 +23,29 @@ const appStore = useAppStore()
 
 const showSettings = ref(false)
 
-onMounted(() => {
-  if (businessStore.loadHistory) businessStore.loadHistory()
+onMounted(async () => {
+  if (businessStore.loadHistory) await businessStore.loadHistory()
+
+  // 【新增】处理强行关闭网页时的紧急备份
+  const backupStr = localStorage.getItem('emergency_chat_backup')
+  if (backupStr) {
+    try {
+      const backup = JSON.parse(backupStr)
+      if (backup.sessionId && backup.text) {
+        const session = businessStore.sessions.find(s => s.id === backup.sessionId)
+        if (session) {
+          session.messages.push({
+            id: uuidv4(),
+            role: 'assistant',
+            content: backup.text,
+            isInterrupted: true
+          })
+          businessStore.saveHistory()
+        }
+      }
+    } catch(e) {}
+    localStorage.removeItem('emergency_chat_backup')
+  }
 })
 
 const modelListSelections = computed(() => {
@@ -44,6 +67,34 @@ const refInputTextString = ref<InputInst | null>()
 
 const aiReplyingText = ref('')
 
+// 【新增】每秒高频备份，防止浏览器直接崩溃无 beforeunload
+const backupToLocalStorage = throttle(() => {
+  if (stylizingLoading.value && aiReplyingText.value && businessStore.activeSessionId) {
+    localStorage.setItem('emergency_chat_backup', JSON.stringify({
+      sessionId: businessStore.activeSessionId,
+      text: aiReplyingText.value
+    }))
+  }
+}, 1000)
+
+// 【新增】监听窗口关闭，如果正在回复，强行写入 localStorage
+useEventListener(window, 'beforeunload', () => {
+  if (stylizingLoading.value && aiReplyingText.value && businessStore.activeSessionId) {
+    localStorage.setItem('emergency_chat_backup', JSON.stringify({
+      sessionId: businessStore.activeSessionId,
+      text: aiReplyingText.value
+    }))
+  }
+})
+
+// 【新增】监听极其恶劣的物理断网
+const { isOnline } = useNetwork()
+watch(isOnline, (online) => {
+  if (!online && stylizingLoading.value) {
+    window.$ModalMessage.error('网络已掉线，输出强制中断')
+    businessStore.abortRequest()
+  }
+})
 
 // ================= 状态 1：图片上传 =================
 const selectedImageBase64 = ref<string | null>(null)
@@ -267,31 +318,112 @@ const handleCreateStylized = async () => {
   await businessStore.appendMessage(newUserMessage)
   scrollToBottom(true) // 发送消息：强制滚动到底部
 
-  stylizingLoading.value = true
+  const currentSessionId = businessStore.activeSessionId
   aiReplyingText.value = ''
+  await executeStream(currentSessionId)
+}
 
+// ================= 流输出执行与闭环 =================
+const executeStream = async (sessionId: string, customPayload?: any[]) => {
+  stylizingLoading.value = true
+  // 【关键修复】如果是续写，此处的 localAiReplyingText 必须继承已经被上一步放进来的半句话，否则一更新就会被清空并丢失前面部分！
+  let localAiReplyingText = aiReplyingText.value || '' 
+  let isStreamClosed = false // 【保障】确保 onClose 和 onError 只进一次
+  
   await businessStore.streamAssistantReply({
     onMessage: (textChunk) => {
-      aiReplyingText.value += textChunk
-      scrollToBottom()
-    },
-    onClose: async () => {
-      stylizingLoading.value = false
-      if (aiReplyingText.value) {
-        await businessStore.appendMessage({
-          role: 'assistant',
-          content: aiReplyingText.value
-        })
+      localAiReplyingText += textChunk
+      // 如果当前仍在原会话，更新 UI 打字机
+      if (businessStore.activeSessionId === sessionId) {
+        aiReplyingText.value = localAiReplyingText
       }
-      aiReplyingText.value = ''
-      setTimeout(() => refInputTextString.value?.focus())
+      scrollToBottom()
+      backupToLocalStorage()
     },
-    onError: (err) => {
-      stylizingLoading.value = false
-      aiReplyingText.value = ''
-      window.$ModalMessage.error(err.message || '请求异常')
+    onClose: async (isAborted) => {
+      if (isStreamClosed) return
+      isStreamClosed = true
+
+      // 只有当前还在本会话时，才解除 loading 和清空气泡
+      if (businessStore.activeSessionId === sessionId) {
+        stylizingLoading.value = false
+        aiReplyingText.value = ''
+      }
+      
+      if (localAiReplyingText) {
+        const session = businessStore.sessions.find(s => s.id === sessionId)
+        if (session) {
+          session.messages.push({
+            id: uuidv4(),
+            role: 'assistant',
+            content: localAiReplyingText, // 使用闭包保存的精准文字
+            isInterrupted: !!isAborted
+          })
+          await businessStore.saveHistory()
+        }
+      }
+      localStorage.removeItem('emergency_chat_backup')
+      // 这里的 setTimeout 等是给当前会话聚焦用
+      if (businessStore.activeSessionId === sessionId) {
+        setTimeout(() => refInputTextString.value?.focus())
+      }
+    },
+    onError: async (err) => {
+      if (isStreamClosed) return
+      isStreamClosed = true
+
+      if (businessStore.activeSessionId === sessionId) {
+        stylizingLoading.value = false
+        aiReplyingText.value = ''
+      }
+      if (localAiReplyingText) {
+        const session = businessStore.sessions.find(s => s.id === sessionId)
+        if (session) {
+          session.messages.push({
+            id: uuidv4(),
+            role: 'assistant',
+            content: localAiReplyingText,
+            isInterrupted: true // error也是中断
+          })
+          await businessStore.saveHistory()
+        }
+      }
+      localStorage.removeItem('emergency_chat_backup')
+      if (err?.name !== 'AbortError') {
+        window.$ModalMessage.error(err.message || '网络连接异常，回答已中断')
+      }
     }
+  }, customPayload)
+}
+
+// ================= 中断恢复与续写生成 =================
+const handleContinueGenerate = async (msgId: string | number) => {
+  if (stylizingLoading.value || isParsingDoc.value) return
+  const session = businessStore.activeSession
+  if (!session) return
+  
+  const msgIndex = session.messages.findIndex(m => m.id === msgId)
+  if (msgIndex === -1) return
+
+  const interruptedMsg = session.messages[msgIndex]
+
+  // 构建续写上下文，将直到这一句的所有对话提取出来
+  const contextPayload: any[] = session.messages.slice(0, msgIndex + 1)
+  
+  // 插入幽灵前置引导语，强迫 AI 连接
+  contextPayload.push({
+    role: 'user',
+    content: `[系统指令]：由于意外中断，你的上一条回复只输出了部分内容。请严格紧接在上面内容的最后一个字符后开始继续输出，不要重复前面已经说过的内容，无需任何开场白、解释或问候。`
   })
+
+  // 提取这半句文字，放回 UI 的打字机气泡区
+  aiReplyingText.value = interruptedMsg.content as string
+  // 从原来的列表里切除这条残缺消息（流式接收完成闭环后会自动推回列表）
+  session.messages.splice(msgIndex, session.messages.length - msgIndex)
+  await businessStore.saveHistory()
+
+  // 发起续集流
+  await executeStream(session.id, contextPayload.slice(-12))
 }
 
 // ... 快捷键与清除等逻辑保持不变 ...
@@ -322,7 +454,13 @@ watch(() => enterCtrl.value, () => {
 })
 
 watch(() => businessStore.activeSessionId, () => {
-  if (stylizingLoading.value) { businessStore.abortRequest(); stylizingLoading.value = false; aiReplyingText.value = '' }
+  // 切换会话时果断终止旧流，由 AbortError 引发 onClose(isAborted=true) 从而跨会话将数据精准存回原位，这里只需发出停止信号
+  if (stylizingLoading.value) { 
+    businessStore.abortRequest() 
+    // 【新增】发出终止信号后，光速清空 UI 呈现，防止“幽灵文本”在微任务间隙泄漏到新会话的气泡中
+    stylizingLoading.value = false
+    aiReplyingText.value = ''
+  }
   clearSelectedImage()
   clearDoc()
   isUserScrolledUp.value = false
@@ -429,7 +567,23 @@ watch(() => windowWidth.value, (newWidth) => {
                       </template>
                       <template v-else><div class="whitespace-pre-wrap">{{ msg.content }}</div></template>
                     </template>
-                    <template v-else><div v-html="renderMarkdownText(msg.content as string)"></div></template>
+                    <template v-else>
+                      <div v-html="renderMarkdownText(msg.content as string)"></div>
+                      
+                      <!-- 中断恢复 UI -->
+                      <div v-if="msg.isInterrupted" class="mt-12 pt-12 border-t border-[#eee] flex flex-col items-start gap-8">
+                        <div class="text-orange-500 text-13 flex items-center font-500">
+                          <span class="mr-4">⚠️ 输出已中断</span>
+                        </div>
+                        <button
+                          class="flex items-center gap-4 px-12 py-6 bg-primary/10 text-primary rounded-6 hover:bg-primary/20 transition-colors text-13 cursor-pointer border-none"
+                          @click="handleContinueGenerate(msg.id as string)"
+                        >
+                          <div class="i-ic:round-play-arrow text-14"></div>
+                          <span>继续生成</span>
+                        </button>
+                      </div>
+                    </template>
                   </div>
                   <!-- 用户头像 -->
                   <div

@@ -13,6 +13,7 @@ export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
   content: string | ContentPart[] // 支持多模态内容
   attachContext?: string // 用于存放文档解析出来的前置上下文，界面不显示，只在底层拼接
+  isInterrupted?: boolean // 【新增】标记该条消息是否因为断网或刷新网页被异常中断
 }
 
 // 统一的 API 请求配置结构
